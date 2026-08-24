@@ -167,8 +167,10 @@ print_entries() {
     else
         printf '   %-22s %s\n' "CIDR" "설명"
         printf '   %-22s %s\n' "----------------------" "------------------------"
-        echo "${json}" | jq -r '.[] | "   \(.Cidr)\t\(.Description // "-")"' \
-            | awk -F'\t' '{printf "   %-22s %s\n", $1, $2}' | sed 's/^   //'
+        # jq 는 탭으로 구분만 하고, 정렬과 들여쓰기는 awk 가 한 번에 처리한다.
+        echo "${json}" \
+            | jq -r '.[] | "\(.Cidr)\t\(.Description // "-")"' \
+            | awk -F'\t' '{printf "   %-22s %s\n", $1, $2}'
     fi
     info ""
     info "사용 ${count} / 최대 ${max}"
