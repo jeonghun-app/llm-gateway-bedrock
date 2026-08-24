@@ -249,6 +249,12 @@ button.primary:hover { background: var(--accent-strong); }
   color: var(--text-muted);
 }
 
+/* 단가 미등록 모델이 섞여 비용 합계가 불완전할 때 강조한다. */
+.kpi-note[data-warn="true"] {
+  color: var(--danger);
+  font-weight: 600;
+}
+
 .chart-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));

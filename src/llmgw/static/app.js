@@ -212,6 +212,20 @@
     document.getElementById('kpi-cost').textContent = formatUsd(
       totals.cost_usd
     );
+
+    // 단가 표에 없는 모델이 섞여 있으면 비용 합계가 실제보다 작다. 그 사실을
+    // 숫자 옆에 바로 알려 잘못된 값을 그대로 신뢰하지 않게 한다.
+    const costNote = document.getElementById('kpi-cost-note');
+    const unpriced = totals.unpriced_requests || 0;
+    if (unpriced > 0) {
+      costNote.textContent =
+        'USD — 단가 미등록 ' + formatCount(unpriced) + '건 제외됨';
+      costNote.setAttribute('data-warn', 'true');
+    } else {
+      costNote.textContent = 'USD';
+      costNote.removeAttribute('data-warn');
+    }
+
     document.getElementById('kpi-latency').textContent = formatMs(
       totals.avg_latency_ms
     );

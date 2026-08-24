@@ -15,8 +15,8 @@
 #   7. 접속 정보 출력
 #
 # 사용법
-#   ./scripts/deploy.sh --allowed-cidr 1.2.3.4/32
-#   ./scripts/deploy.sh --allowed-cidr 1.2.3.4/32 --env stg --region us-west-2
+#   ./scripts/deploy.sh --allowed-cidr 203.0.113.10/32
+#   ./scripts/deploy.sh --allowed-cidr 203.0.113.10/32 --env stg --region us-west-2
 #
 # 여러 번 실행해도 안전하다. CloudFormation 변경 집합과 ECR 태그 확인으로
 # 이미 반영된 작업은 건너뛴다.
@@ -33,9 +33,9 @@ ENVIRONMENT="dev"
 # 리전 기본값. 호스트가 us-east-1 에 있고 Bedrock 모델 가용성이 가장 넓다.
 AWS_REGION="${AWS_REGION:-us-east-1}"
 OWNER="platform-team"
-ALLOWED_CIDR_1=""
-ALLOWED_CIDR_2=""
-ALLOWED_CIDR_3=""
+# 부트스트랩 시 허용 목록에 넣을 CIDR. 여러 번 지정할 수 있다. 배포 후
+# 추가·삭제는 scripts/manage_access.sh 로 하며 재배포가 필요 없다.
+ALLOWED_CIDRS=()
 CERTIFICATE_ARN=""
 DESIRED_COUNT="1"
 TASK_CPU="512"
@@ -47,6 +47,7 @@ RUN_SEED="yes"
 RUN_SMOKE="yes"
 SHOW_ADMIN_TOKEN="no"
 DOCKER_CMD="docker"
+ACCESS_MAX_ENTRIES="20"
 
 # 색 없는 출력. CI 로그에서 제어문자가 섞이지 않게 한다.
 log()  { printf '\n== %s\n' "$*"; }
@@ -61,10 +62,14 @@ usage() {
 필수
   --allowed-cidr <CIDR>     ALB 접근을 허용할 CIDR. 0.0.0.0/0 은 거부된다.
                             접속할 단말의 공인 IP /32 를 권장한다.
+                            여러 번 지정할 수 있다. 예:
+                              --allowed-cidr 203.0.113.10/32 --allowed-cidr 198.51.100.5/32
+                            배포 후 단말 추가·삭제는 재배포 없이
+                            ./scripts/manage_access.sh 로 한다.
 
 선택
-  --allowed-cidr-2 <CIDR>   추가 허용 CIDR
-  --allowed-cidr-3 <CIDR>   추가 허용 CIDR
+  --access-max-entries <N>  허용 목록 최대 항목 수 (기본 20). 생성 후 늘릴
+                            수만 있고 줄일 수 없다.
   --project <이름>          리소스 이름 접두어 (기본 llmgw)
   --env <dev|stg|prod>      배포 환경 (기본 dev)
   --region <리전>           배포 리전 (기본 us-east-1 또는 $AWS_REGION)
@@ -82,7 +87,16 @@ usage() {
   -h, --help                이 도움말
 
 예시
+  # 현재 단말만 열고 배포
   ./scripts/deploy.sh --allowed-cidr "$(curl -s https://checkip.amazonaws.com)/32"
+
+  # 여러 단말을 한 번에 열고 배포
+  ./scripts/deploy.sh --allowed-cidr 203.0.113.10/32 \
+                      --allowed-cidr 198.51.100.5/32
+
+  # 배포 후 단말 추가 (재배포 없음, 수 초 내 반영)
+  ./scripts/manage_access.sh add-me --label "재택-노트북"
+  ./scripts/manage_access.sh list
 USAGE
 }
 
@@ -91,9 +105,8 @@ USAGE
 # ---------------------------------------------------------------------------
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --allowed-cidr)     ALLOWED_CIDR_1="${2:-}"; shift 2 ;;
-        --allowed-cidr-2)   ALLOWED_CIDR_2="${2:-}"; shift 2 ;;
-        --allowed-cidr-3)   ALLOWED_CIDR_3="${2:-}"; shift 2 ;;
+        --allowed-cidr)     ALLOWED_CIDRS+=("${2:-}"); shift 2 ;;
+        --access-max-entries) ACCESS_MAX_ENTRIES="${2:-}"; shift 2 ;;
         --project)          PROJECT_NAME="${2:-}"; shift 2 ;;
         --env)              ENVIRONMENT="${2:-}"; shift 2 ;;
         --region)           AWS_REGION="${2:-}"; shift 2 ;;
@@ -123,7 +136,7 @@ aws_cli() { aws --region "${AWS_REGION}" "$@"; }
 # ---------------------------------------------------------------------------
 log "1/7 사전 점검"
 
-[[ -n "${ALLOWED_CIDR_1}" ]] || { usage; die "--allowed-cidr 는 필수다."; }
+[[ ${#ALLOWED_CIDRS[@]} -gt 0 ]] || { usage; die "--allowed-cidr 는 최소 한 번 지정해야 한다."; }
 
 # 0.0.0.0/0 은 템플릿 정규식도 거부하지만, 여기서 먼저 막아 오류 메시지를
 # 명확하게 만든다. CloudFormation 파라미터 검증 실패 메시지는 원인을 찾기
@@ -135,12 +148,15 @@ validate_cidr() {
         die "${label} 에 전체 개방 CIDR(${cidr})은 쓸 수 없다. 접속할 단말의 IP /32 를 지정한다."
     fi
     if [[ ! "${cidr}" =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}/[0-9]{1,2}$ ]]; then
-        die "${label} 형식이 올바르지 않다: ${cidr} (예: 1.2.3.4/32)"
+        die "${label} 형식이 올바르지 않다: ${cidr} (예: 203.0.113.10/32)"
     fi
 }
-validate_cidr "${ALLOWED_CIDR_1}" "--allowed-cidr"
-validate_cidr "${ALLOWED_CIDR_2}" "--allowed-cidr-2"
-validate_cidr "${ALLOWED_CIDR_3}" "--allowed-cidr-3"
+for cidr in "${ALLOWED_CIDRS[@]}"; do
+    validate_cidr "${cidr}" "--allowed-cidr"
+done
+if [[ ${#ALLOWED_CIDRS[@]} -gt ${ACCESS_MAX_ENTRIES} ]]; then
+    die "지정한 CIDR 수(${#ALLOWED_CIDRS[@]})가 --access-max-entries(${ACCESS_MAX_ENTRIES})보다 많다."
+fi
 
 command -v aws >/dev/null 2>&1 || die "aws CLI 가 필요하다."
 command -v jq  >/dev/null 2>&1 || die "jq 가 필요하다."
@@ -284,9 +300,7 @@ aws_cli cloudformation deploy \
         "Owner=${OWNER}" \
         "ImageUri=${IMAGE_URI}" \
         "EcrRepositoryArn=${REPOSITORY_ARN}" \
-        "AllowedIngressCidr1=${ALLOWED_CIDR_1}" \
-        "AllowedIngressCidr2=${ALLOWED_CIDR_2}" \
-        "AllowedIngressCidr3=${ALLOWED_CIDR_3}" \
+        "AccessListMaxEntries=${ACCESS_MAX_ENTRIES}" \
         "CertificateArn=${CERTIFICATE_ARN}" \
         "DesiredCount=${DESIRED_COUNT}" \
         "TaskCpu=${TASK_CPU}" \
@@ -324,6 +338,56 @@ ADMIN_TOKEN="$(aws_cli secretsmanager get-secret-value \
     || die "관리 토큰을 읽지 못했다."
 
 # ---------------------------------------------------------------------------
+# 4b. 접근 허용 목록 시딩
+# ---------------------------------------------------------------------------
+# 보안 그룹은 프리픽스 리스트 하나만 참조한다. CloudFormation 은 리스트
+# 리소스만 만들고 엔트리는 관리하지 않으므로(그래야 재배포 없이 단말을
+# 추가·삭제할 수 있다) 여기서 초기 엔트리를 채운다. 이미 있는 CIDR 은
+# 건너뛰어 재실행이 안전하다.
+log "접근 허용 목록 설정"
+PREFIX_LIST_ID="$(stack_output "${APP_STACK}" AccessPrefixListId)"
+info "프리픽스 리스트 ${PREFIX_LIST_ID}"
+
+wait_prefix_list_ready() {
+    local state
+    for _ in $(seq 1 30); do
+        state="$(aws_cli ec2 describe-managed-prefix-lists \
+            --prefix-list-ids "${PREFIX_LIST_ID}" \
+            --query 'PrefixLists[0].State' --output text 2>/dev/null || echo unknown)"
+        case "${state}" in
+            create-complete|modify-complete|restore-complete) return 0 ;;
+            *-failed) die "프리픽스 리스트가 실패 상태다: ${state}" ;;
+        esac
+        sleep 2
+    done
+    die "프리픽스 리스트가 준비되지 않았다."
+}
+
+for cidr in "${ALLOWED_CIDRS[@]}"; do
+    wait_prefix_list_ready
+    if [[ -n "$(aws_cli ec2 get-managed-prefix-list-entries \
+            --prefix-list-id "${PREFIX_LIST_ID}" \
+            --query "Entries[?Cidr=='${cidr}'].Cidr" --output text)" ]]; then
+        info "${cidr} 이미 등록됨"
+        continue
+    fi
+    aws_cli ec2 modify-managed-prefix-list \
+        --prefix-list-id "${PREFIX_LIST_ID}" \
+        --current-version "$(aws_cli ec2 describe-managed-prefix-lists \
+            --prefix-list-ids "${PREFIX_LIST_ID}" \
+            --query 'PrefixLists[0].Version' --output text)" \
+        --add-entries "Cidr=${cidr},Description=bootstrap by deploy.sh" \
+        >/dev/null
+    info "${cidr} 추가"
+done
+wait_prefix_list_ready
+
+ALLOWED_SUMMARY="$(aws_cli ec2 get-managed-prefix-list-entries \
+    --prefix-list-id "${PREFIX_LIST_ID}" \
+    --query 'Entries[].Cidr' --output text | tr '\t' ' ')"
+info "현재 허용: ${ALLOWED_SUMMARY:-(없음)}"
+
+# ---------------------------------------------------------------------------
 # 5. 서비스 준비 대기
 # ---------------------------------------------------------------------------
 log "5/7 서비스 기동 대기"
@@ -341,7 +405,8 @@ done
 if [[ "${ready}" != "yes" ]]; then
     warn "5분 안에 healthz 가 200 을 반환하지 않았다. 접근 CIDR 이 현재 단말 IP 와 다를 수 있다."
     warn "현재 단말 공인 IP: $(curl -s --max-time 5 https://checkip.amazonaws.com 2>/dev/null || echo '확인 실패')"
-    warn "허용 CIDR: ${ALLOWED_CIDR_1} ${ALLOWED_CIDR_2} ${ALLOWED_CIDR_3}"
+    warn "현재 허용 목록: ${ALLOWED_SUMMARY:-(없음)}"
+    warn "이 단말을 추가: ./scripts/manage_access.sh add-me --env ${ENVIRONMENT} --region ${AWS_REGION}"
     warn "태스크 로그: aws logs tail ${LOG_GROUP} --region ${AWS_REGION} --since 10m"
 fi
 
@@ -404,9 +469,13 @@ cat <<SUMMARY
 
  대시보드는 위 토큰을 입력해야 데이터가 보인다.
 
- 접근 허용 CIDR  ${ALLOWED_CIDR_1} ${ALLOWED_CIDR_2} ${ALLOWED_CIDR_3}
- 다른 단말에서 접속하려면 --allowed-cidr-2 에 그 단말 IP 를 추가해 다시
- 실행한다. 자세한 절차는 docs/runbook.md 를 참고한다.
+ 접근 허용 목록  ${ALLOWED_SUMMARY:-(없음)}
+ 단말 관리 (재배포 불필요, 수 초 내 반영)
+   ./scripts/manage_access.sh list
+   ./scripts/manage_access.sh add-me --label "내-노트북"
+   ./scripts/manage_access.sh add 203.0.113.10/32 --label "사무실"
+   ./scripts/manage_access.sh remove 203.0.113.10/32
+   ./scripts/manage_access.sh check
 
  전체 삭제
    ./scripts/teardown.sh --env ${ENVIRONMENT} --region ${AWS_REGION} --purge-data

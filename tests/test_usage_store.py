@@ -349,3 +349,100 @@ def test_dimension_sk_정렬키형식(
 
     # Assert
     assert actual == expected
+
+
+def test_record_단가미등록모델은unpriced_requests로집계된다(
+    usage_store: repository.UsageStore,
+) -> None:
+    """비용 0 집계가 조용히 지나가지 않아야 한다."""
+    # Arrange
+    record = conftest.make_usage_record(
+        request_id="req-unpriced", cost_usd="0"
+    ).model_copy(update={"pricing_known": False})
+
+    # Act
+    usage_store.record(record)
+
+    # Assert
+    total = usage_store.query_totals(
+        "acme", domain.Granularity.DAY, "2026-08-23"
+    )["TOTAL"]
+    assert total.requests == 1
+    assert total.unpriced_requests == 1
+    assert (
+        total.is_cost_complete is False
+    ), "단가 미등록 요청이 있으면 비용 합계가 불완전하다고 알려야 한다"
+
+
+def test_record_단가등록모델은unpriced가0이다(
+    usage_store: repository.UsageStore,
+) -> None:
+    # Arrange
+    record = conftest.make_usage_record(request_id="req-priced")
+
+    # Act
+    usage_store.record(record)
+
+    # Assert
+    total = usage_store.query_totals(
+        "acme", domain.Granularity.DAY, "2026-08-23"
+    )["TOTAL"]
+    assert total.unpriced_requests == 0
+    assert total.is_cost_complete is True
+
+
+def test_record_단가미등록과등록이섞이면부분집계로표시된다(
+    usage_store: repository.UsageStore,
+) -> None:
+    # Arrange
+    usage_store.record(
+        conftest.make_usage_record(request_id="req-ok", cost_usd="1.5")
+    )
+    usage_store.record(
+        conftest.make_usage_record(
+            request_id="req-no-price", cost_usd="0"
+        ).model_copy(update={"pricing_known": False})
+    )
+
+    # Act
+    total = usage_store.query_totals(
+        "acme", domain.Granularity.DAY, "2026-08-23"
+    )["TOTAL"]
+
+    # Assert
+    assert total.requests == 2
+    assert total.unpriced_requests == 1
+    assert total.cost_usd == decimal.Decimal("1.5")
+    assert total.is_cost_complete is False
+
+
+def test_record_구버전집계행은unpriced를0으로읽는다(
+    usage_store: repository.UsageStore, dynamodb_client: typing.Any
+) -> None:
+    """1.0 에서 기록된 행에는 이 속성이 없다. 하위 호환을 확인한다."""
+    # Arrange
+    # unpriced_requests 속성이 없는 집계 행을 직접 만든다.
+    dynamodb_client.put_item(
+        TableName=conftest.USAGE_AGG_TABLE,
+        Item={
+            "pk": {"S": "legacy#DAY#2026-08-23"},
+            "sk": {"S": "TOTAL"},
+            "requests": {"N": "5"},
+            "success_requests": {"N": "5"},
+            "error_requests": {"N": "0"},
+            "input_tokens": {"N": "100"},
+            "output_tokens": {"N": "50"},
+            "cost_usd": {"N": "0.5"},
+            "latency_ms_sum": {"N": "500"},
+        },
+    )
+
+    # Act
+    total = usage_store.query_totals(
+        "legacy", domain.Granularity.DAY, "2026-08-23"
+    )["TOTAL"]
+
+    # Assert
+    assert total.requests == 5
+    assert total.unpriced_requests == 0
+    assert total.is_cost_complete is True

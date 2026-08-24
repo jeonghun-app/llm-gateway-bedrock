@@ -96,12 +96,14 @@ aws cloudformation deploy --region $REGION --stack-name $STACK \
   --no-fail-on-empty-changeset \
   --parameter-overrides \
     "ImageUri=${ACCOUNT_ID}.dkr.ecr.${REGION}.amazonaws.com/llmgw-dev:<되돌릴태그>" \
-    "AllowedIngressCidr1=<현재CIDR>" \
     "EcrRepositoryArn=arn:aws:ecr:${REGION}:${ACCOUNT_ID}:repository/llmgw-dev"
 ```
 
 `deploy.sh` 로 배포했던 나머지 파라미터는 CloudFormation 이 이전 값을 유지한다.
 명시하지 않은 파라미터는 기본값이 아니라 **이전 값**이 쓰인다.
+
+접근 허용 목록은 CloudFormation 이 관리하지 않으므로 롤백에 영향받지 않는다.
+이미지를 되돌려도 허용 단말은 그대로 유지된다.
 
 ### 스택이 `ROLLBACK_COMPLETE` 인 경우
 
@@ -116,34 +118,67 @@ aws cloudformation deploy --region $REGION --stack-name $STACK \
 
 ---
 
-## 3. 접근 CIDR 변경
+## 3. 접근 단말 관리
 
-IP 가 바뀌어 접속이 안 될 때 가장 흔한 상황이다.
+스택 재배포가 필요 없다. 프리픽스 리스트 엔트리를 직접 바꾸면 수 초 안에
+반영된다.
 
 ```bash
-# 현재 내 IP
-curl -s https://checkip.amazonaws.com
+# 현재 허용 목록
+./scripts/manage_access.sh list --env dev --region $REGION
 
-# 현재 허용된 CIDR 확인
-aws cloudformation describe-stacks --region $REGION --stack-name $STACK \
-  --query "Stacks[0].Parameters[?starts_with(ParameterKey,'AllowedIngressCidr')]" \
-  --output table
+# 이 단말 추가 (가장 흔한 작업)
+./scripts/manage_access.sh add-me --label "재택-노트북"
 
-# CIDR 을 바꿔 재배포 (최대 3개)
-./scripts/deploy.sh \
-  --allowed-cidr 203.0.113.10/32 \
-  --allowed-cidr-2 198.51.100.5/32 \
-  --no-seed
+# 특정 CIDR 추가·제거
+./scripts/manage_access.sh add 203.0.113.10/32 --label "사무실-맥북"
+./scripts/manage_access.sh remove 198.51.100.5/32
+
+# 접근 가능한지 확인 (실제 HTTP 호출까지)
+./scripts/manage_access.sh check
+
+# 전체 상태 (0.0.0.0/0 규칙 검사 포함)
+./scripts/manage_access.sh status
 ```
 
-**보안 그룹을 콘솔에서 직접 고치지 않는다.** 다음 배포에서 되돌아간다. 항상
-파라미터로 변경한다.
+### 접속이 안 될 때
 
-`0.0.0.0/0` 은 스크립트와 CloudFormation 파라미터 정규식 양쪽에서 거부된다.
-정말 광범위한 접근이 필요하면 ALB 앞에 WAF 를 두거나 Cognito 인증을 붙이는
-방향을 검토한다. 파라미터 제약을 우회하는 방식은 쓰지 않는다.
+```bash
+# 1. 내 IP 확인
+curl -s https://checkip.amazonaws.com
 
----
+# 2. 허용 목록에 있는지 확인
+./scripts/manage_access.sh check
+
+# 3. 없으면 추가
+./scripts/manage_access.sh add-me --label "$(hostname)"
+```
+
+`check` 가 "성공 (HTTP 200)" 을 반환하면 네트워크는 정상이다. 그래도 애플리케이션
+응답이 이상하면 4절의 알람 대응으로 넘어간다.
+
+### 한도가 찼을 때
+
+기본 한도는 20개다. **프리픽스 리스트의 `MaxEntries` 는 생성 후 늘릴 수만 있고
+줄일 수 없다.**
+
+```bash
+# 쓰지 않는 항목 정리가 우선
+./scripts/manage_access.sh list
+
+# 그래도 부족하면 한도를 늘려 재배포
+./scripts/deploy.sh --allowed-cidr <아무_기존_CIDR> \
+  --access-max-entries 50 --no-seed --no-smoke
+```
+
+### 하지 말아야 할 것
+
+- **보안 그룹 규칙을 콘솔에서 직접 고치지 않는다.** 다음 배포에서 되돌아간다.
+  보안 그룹은 프리픽스 리스트만 참조하므로 고칠 이유도 없다.
+- **`0.0.0.0/0` 을 프리픽스 리스트에 넣지 않는다.** 스크립트가 거부하지만 AWS
+  CLI 로 우회할 수 있다. `smoke_test.sh` 가 매 배포마다 검사해 잡아낸다.
+  전체 개방이 필요하다고 판단되면 ALB 앞에 WAF 나 Cognito 인증을 두는 방향을
+  검토한다.
 
 ## 4. 알람 대응
 

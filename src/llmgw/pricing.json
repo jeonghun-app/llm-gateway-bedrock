@@ -4,7 +4,8 @@
     "captured_at": "2026-08-23",
     "source": "https://aws.amazon.com/bedrock/pricing/",
     "note": "온디맨드 단가 스냅샷이다. Bedrock 단가는 변경되므로 운영 전에 반드시 위 페이지와 대조해 갱신한다. 여기 없는 모델은 비용 0으로 기록되고 pricing_known=false 플래그가 남는다.",
-    "region_note": "리전별 단가 차이는 반영하지 않았다. us-east-1 기준이다."
+    "region_note": "리전별 단가 차이는 반영하지 않았다. us-east-1 기준이다.",
+    "synced_from_price_list_api": "us-east-1"
   },
   "models": {
     "amazon.nova-micro-v1:0": {
@@ -98,6 +99,74 @@
     "cohere.embed-v4:0": {
       "input_per_1k_usd": "0.00012",
       "output_per_1k_usd": "0"
+    },
+    "deepseek.v3.2": {
+      "input_per_1k_usd": "0.0006200000",
+      "output_per_1k_usd": "0.0018500000"
+    },
+    "minimax.minimax-m2": {
+      "input_per_1k_usd": "0.0001500000",
+      "output_per_1k_usd": "0.0012000000"
+    },
+    "minimax.minimax-m2.1": {
+      "input_per_1k_usd": "0.0003000000",
+      "output_per_1k_usd": "0.0012000000"
+    },
+    "minimax.minimax-m2.5": {
+      "input_per_1k_usd": "0.0003000000",
+      "output_per_1k_usd": "0.0012000000"
+    },
+    "mistral.magistral-small-2509": {
+      "input_per_1k_usd": "0.0002500000",
+      "output_per_1k_usd": "0.0015000000"
+    },
+    "moonshot.kimi-k2-thinking": {
+      "input_per_1k_usd": "0.0006000000",
+      "output_per_1k_usd": "0.0025000000"
+    },
+    "moonshotai.kimi-k2.5": {
+      "input_per_1k_usd": "0.0006000000",
+      "output_per_1k_usd": "0.0030000000"
+    },
+    "nvidia.nemotron-nano-3-30b": {
+      "input_per_1k_usd": "0.0000600000",
+      "output_per_1k_usd": "0.0001200000"
+    },
+    "nvidia.nemotron-super-3-120b": {
+      "input_per_1k_usd": "0.0001500000",
+      "output_per_1k_usd": "0.0006500000"
+    },
+    "openai.gpt-oss-safeguard-120b": {
+      "input_per_1k_usd": "0.0001500000",
+      "output_per_1k_usd": "0.0006000000"
+    },
+    "openai.gpt-oss-safeguard-20b": {
+      "input_per_1k_usd": "0.0000700000",
+      "output_per_1k_usd": "0.0001000000"
+    },
+    "qwen.qwen3-coder-next": {
+      "input_per_1k_usd": "0.0005000000",
+      "output_per_1k_usd": "0.0012000000"
+    },
+    "qwen.qwen3-next-80b-a3b": {
+      "input_per_1k_usd": "0.0001400000",
+      "output_per_1k_usd": "0.0012000000"
+    },
+    "qwen.qwen3-vl-235b-a22b": {
+      "input_per_1k_usd": "0.0002600000",
+      "output_per_1k_usd": "0.0013300000"
+    },
+    "writer.palmyra-vision-7b": {
+      "input_per_1k_usd": "0.0001500000",
+      "output_per_1k_usd": "0.0006000000"
+    },
+    "zai.glm-4.7-flash": {
+      "input_per_1k_usd": "0.0000700000",
+      "output_per_1k_usd": "0.0004000000"
+    },
+    "zai.glm-5": {
+      "input_per_1k_usd": "0.0010000000",
+      "output_per_1k_usd": "0.0032000000"
     }
   }
 }

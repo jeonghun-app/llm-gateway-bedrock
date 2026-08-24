@@ -50,7 +50,31 @@ check_status "대시보드" 200 "${BASE_URL}/ui/"
 check_status "OpenAPI 스펙" 200 "${BASE_URL}/openapi.json"
 
 echo
-echo "2. 인증 경계"
+echo "2. 네트워크 접근 통제"
+# 템플릿에서 0.0.0.0/0 을 문법으로 막던 보장이 프리픽스 리스트 방식으로
+# 옮겨졌다. 매 배포마다 전체 개방 규칙이 없는지 여기서 확인해 보장을 유지한다.
+if [[ -n "${LLMGW_STACK_TAG_PROJECT:-}" || -n "${LLMGW_REGION:-}" ]] \
+   || command -v aws >/dev/null 2>&1; then
+    region="${LLMGW_REGION:-${AWS_REGION:-us-east-1}}"
+    project="${LLMGW_STACK_TAG_PROJECT:-llmgw}"
+    environment="${LLMGW_STACK_TAG_ENV:-dev}"
+    # shellcheck disable=SC2016  # 백틱은 JMESPath 리터럴 문법이다.
+    open_rules="$(aws ec2 describe-security-groups --region "${region}" \
+        --filters "Name=tag:Project,Values=${project}" \
+                  "Name=tag:Environment,Values=${environment}" \
+        --query 'SecurityGroups[].IpPermissions[].IpRanges[?CidrIp==`0.0.0.0/0`]' \
+        --output json 2>/dev/null | jq '[.[][]?] | length' 2>/dev/null || echo "skip")"
+    if [[ "${open_rules}" == "0" ]]; then
+        pass "인바운드에 0.0.0.0/0 규칙 없음"
+    elif [[ "${open_rules}" == "skip" ]]; then
+        echo "  [건너뜀] 보안 그룹 조회 권한이 없어 확인하지 못했다"
+    else
+        fail "인바운드에 0.0.0.0/0 규칙이 ${open_rules}개 있다"
+    fi
+fi
+
+echo
+echo "3. 인증 경계"
 check_status "관리 API 무인증 차단" 401 "${BASE_URL}/admin/accounts"
 check_status "관리 API 잘못된 토큰 차단" 401 \
     -H "X-Admin-Token: definitely-wrong" "${BASE_URL}/admin/accounts"
@@ -62,7 +86,7 @@ check_status "채팅 API 무인증 차단" 401 \
     "${BASE_URL}/v1/chat/completions"
 
 echo
-echo "3. Bedrock 모델 조회"
+echo "4. Bedrock 모델 조회"
 models_json="$(curl -s --max-time 30 -H "X-Admin-Token: ${ADMIN_TOKEN}" \
     "${BASE_URL}/admin/models")"
 model_count="$(echo "${models_json}" | jq -r '.data | length' 2>/dev/null || echo 0)"
@@ -112,7 +136,7 @@ else
         | .[0] // empty')"
 
     echo
-    echo "4. OpenAI 호환 API (모델 ${TEST_MODEL})"
+    echo "5. OpenAI 호환 API (모델 ${TEST_MODEL})"
     check_status "v1/models" 200 \
         -H "Authorization: Bearer ${API_KEY}" "${BASE_URL}/v1/models"
 
@@ -144,7 +168,7 @@ else
     fi
 
     echo
-    echo "5. 정책 적용"
+    echo "6. 정책 적용"
     check_status "허용되지 않은 역할로 시작하면 400" 400 \
         -X POST -H "Authorization: Bearer ${API_KEY}" \
         -H 'Content-Type: application/json' \
@@ -157,7 +181,7 @@ else
         "${BASE_URL}/v1/chat/completions"
 
     echo
-    echo "6. 멱등성 (같은 X-Request-Id 2회)"
+    echo "7. 멱등성 (같은 X-Request-Id 2회)"
     idem_id="smoke-idem-$(date -u +%s)"
     for _ in 1 2; do
         curl -s -o /dev/null --max-time 90 -X POST \
@@ -179,7 +203,7 @@ else
     fi
 
     echo
-    echo "7. 집계와 대시보드 데이터"
+    echo "8. 집계와 대시보드 데이터"
     dash="$(curl -s --max-time 60 -H "X-Admin-Token: ${ADMIN_TOKEN}" \
         "${BASE_URL}/analytics/dashboard?account_id=${ACCOUNT_ID}")"
     requests_total="$(echo "${dash}" | jq -r '.totals.requests // 0')"

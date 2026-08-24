@@ -265,6 +265,9 @@ def _totals_from_item(item: _JsonDict) -> domain.UsageTotals:
         output_tokens=_as_int(item.get("output_tokens")),
         cost_usd=decimal.Decimal(str(item.get("cost_usd", "0"))),
         latency_ms_sum=_as_int(item.get("latency_ms_sum")),
+        # 1.0 에서 기록된 행에는 이 속성이 없다. 없으면 0으로 읽어 하위
+        # 호환을 유지한다.
+        unpriced_requests=_as_int(item.get("unpriced_requests")),
     )
 
 
@@ -1024,10 +1027,14 @@ class UsageStore:
         """집계 행 하나에 대한 ADD 업데이트 항목을 만든다."""
         success_delta = 1 if usage.is_success else 0
         error_delta = 0 if usage.is_success else 1
+        # 단가를 모르는 모델은 비용이 0으로 기록된다. 그 사실을 집계에 남겨
+        # 대시보드가 "비용이 실제보다 작다"고 알릴 수 있게 한다.
+        unpriced_delta = 0 if usage.pricing_known else 1
         values: _JsonDict = {
             ":one": 1,
             ":success": success_delta,
             ":error": error_delta,
+            ":unpriced": unpriced_delta,
             ":input_tokens": usage.input_tokens,
             ":output_tokens": usage.output_tokens,
             ":cost_usd": usage.cost_usd,
@@ -1055,7 +1062,8 @@ class UsageStore:
                     " #input_tokens :input_tokens,"
                     " #output_tokens :output_tokens,"
                     " #cost_usd :cost_usd,"
-                    " #latency_ms_sum :latency_ms"
+                    " #latency_ms_sum :latency_ms,"
+                    " #unpriced_requests :unpriced"
                 ),
                 "ExpressionAttributeNames": {
                     "#dimension": "dimension",
@@ -1068,6 +1076,7 @@ class UsageStore:
                     "#output_tokens": "output_tokens",
                     "#cost_usd": "cost_usd",
                     "#latency_ms_sum": "latency_ms_sum",
+                    "#unpriced_requests": "unpriced_requests",
                 },
                 "ExpressionAttributeValues": {
                     name: _serialize(value) for name, value in values.items()

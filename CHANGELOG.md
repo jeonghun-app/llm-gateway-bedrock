@@ -3,6 +3,96 @@
 형식은 [Keep a Changelog](https://keepachangelog.com/ko/1.1.0/) 를 따르고,
 버전은 [유의적 버전](https://semver.org/lang/ko/)을 쓴다.
 
+## [1.1.0] - 2026-08-24
+
+접근 통제를 다중 단말 운영에 맞게 재설계하고, 비용 집계의 조용한 누락을
+드러나게 만들었다. Claude 연동과 Bedrock 엔드포인트 선택 근거를 문서로 남겼다.
+
+0.1.0 에서 바로 1.1.0 으로 올렸다. 접근 통제 방식이 바뀌어 배포 인터페이스가
+달라졌고, 사용량 집계에 필드가 추가되어 기능 증분이 패치 수준을 넘는다.
+
+### 변경 (BREAKING)
+
+- **접근 허용 CIDR 을 관리형 프리픽스 리스트로 관리한다.** ALB 보안 그룹이
+  프리픽스 리스트 하나만 참조하므로 단말이 몇 개든 규칙은 프로토콜당 1개다.
+  **단말 추가·삭제에 스택 재배포가 필요 없고 수 초 안에 반영된다.**
+  - CloudFormation 파라미터 `AllowedIngressCidr1/2/3` 이 **제거**되었다.
+    대신 `AccessListMaxEntries`(기본 20)가 추가됐다.
+  - `deploy.sh` 의 `--allowed-cidr-2`, `--allowed-cidr-3` 옵션이 **제거**되었다.
+    `--allowed-cidr` 를 여러 번 지정한다.
+  - 기존 스택은 재배포 시 보안 그룹 규칙이 교체된다. 배포 직후 프리픽스
+    리스트가 채워지므로 접근이 유지되지만, 배포 중 짧은 단절이 있을 수 있다.
+  - 프리픽스 리스트는 **빈 상태로 생성**된다. 아무도 접근할 수 없는 상태에서
+    시작하고 명시적으로 추가한 단말만 통과한다.
+- **`0.0.0.0/0` 차단 지점이 이동했다.** 이전에는 CloudFormation 파라미터 정규식이
+  막았다. 프리픽스 리스트에는 파라미터 제약을 걸 수 없어, 차단이 세 곳으로
+  옮겨졌다: `deploy.sh` 검증, `manage_access.sh` 검증, 그리고 매 배포마다
+  실행되는 `smoke_test.sh` 의 전체 개방 규칙 검사. `/8` 보다 넓은 대역도
+  스크립트가 거부한다.
+- **집계에 `unpriced_requests` 필드가 추가됐다.** `/analytics/*` 응답에
+  `unpriced_requests` 와 `cost_complete` 가 포함된다. 응답 스키마에 필드가
+  늘어난 것이므로 기존 클라이언트는 영향받지 않는다. 1.0 에서 기록된 집계
+  행에는 이 속성이 없고 0으로 읽힌다.
+
+### 추가
+
+- **`scripts/manage_access.sh`** — 접근 단말 관리. `list`, `add`, `add-me`,
+  `remove`, `check`, `status` 서브명령. 라벨로 어느 단말인지 기록한다.
+  `check` 는 목록 확인과 실제 HTTP 호출을 함께 수행한다.
+- **`scripts/scan_secrets.sh`** — 시크릿 검사. AWS 키, GitHub 토큰, Slack 토큰,
+  OpenAI 키, 게이트웨이 API 키 평문, Bedrock API 키, private key, JWT, 실제 계정
+  ID, 계정 ID 포함 ARN, 추적돼서는 안 되는 경로를 검사한다. `--history` 로 전체
+  커밋 히스토리까지 확인한다. CI 잡으로 추가했다.
+- **`scripts/sync_pricing.py`** — AWS Price List API 와 단가 표를 대조해 불일치·
+  누락·미확인을 보고한다. `--apply` 로 **API 가 확인한 값만** 반영한다.
+  확인되지 않은 모델의 단가를 추측해 넣지 않는다.
+- **단가 미등록 사용량 가시화.** 단가 표에 없는 모델로 처리된 요청이
+  `unpriced_requests` 로 집계되고, 대시보드 총비용 카드에
+  `USD — 단가 미등록 N건 제외됨` 경고가 표시된다. 이전에는 비용이 0으로 조용히
+  누락됐다.
+- **`docs/models-claude.md`** — Claude 연동 상세. 현행 Claude 가 전부
+  `INFERENCE_PROFILE` 전용이라 기반 모델 ID 로는 호출되지 않는다는 점,
+  `us.` 와 `global.` 선택 기준, 허용 목록 정규화가 프로파일 접두어를 무시한다는
+  점과 그 보안 함의, LEGACY/EOL 처리, 단가 갭의 현재 상태와 메우는 방법,
+  미지원 기능(비전·도구 사용·프롬프트 캐싱 등) 목록, 실측 검증 결과.
+- **`docs/bedrock-endpoints.md`** — `bedrock-runtime` 과 `bedrock-mantle` 전체
+  비교(API·기능·인증·처리량·요금), 게이트웨이가 `bedrock-runtime` + Converse 를
+  고른 이유, **AWS 가 이미 OpenAI 호환 API 를 제공하는데 이 게이트웨이가 필요한
+  이유와 필요 없는 경우**, Mantle 전용 기능이 필요할 때의 경로, Guardrails 도입
+  설계 지점, PrivateLink 손익분기 계산.
+- **`SECURITY.md`** — 시크릿 관리 원칙, 검사 절차, 유출 시 대응 순서, 접근 통제
+  3계층, 알려진 위험 4건, IAM 와일드카드 사유, 데이터 보호 설정, 프로덕션 전환
+  보안 체크리스트.
+- **`tests/test_static_charts.py`** — 대시보드 SVG 차트 렌더링 검증 15건.
+  최소 DOM 셰임(`tests/js/charts_harness.js`)을 Node 로 실행한다. 경계 케이스
+  (빈 데이터, 데이터 1건, 값 전부 0, 조각 1개 도넛)와 접근성 속성을 확인한다.
+  Node 가 없으면 건너뛴다. npm 의존성은 추가하지 않았다.
+- **모델 단가 17종 추가.** Price List API 로 확인된 값만 반영했다.
+  DeepSeek v3.2, MiniMax M2 계열, Kimi K2 계열, Nemotron 3, GPT-OSS Safeguard,
+  Qwen3 계열, GLM 4.7/5, Palmyra Vision 등. 단가 표가 23 → 40개가 됐다.
+
+### 검증
+
+- 단가 표 대조 결과 **기존 23개 항목이 AWS Price List API 값과 불일치 0건**.
+  손으로 넣은 스냅샷이 정확했음이 확인됐다.
+- 프리픽스 리스트 설계는 실제 스택 업데이트로 검증했다. `Entries` 속성을
+  템플릿에서 생략하면 CloudFormation 이 스택 밖에서 추가한 엔트리를 되돌리지
+  않는다.
+- 시크릿 검사: 워킹트리·전체 커밋 히스토리·커밋 메시지·원격 브랜치 모두 클린.
+
+### 알려진 제약 (변경 사항)
+
+- **현행 Claude 모델의 단가가 등록되지 않았다.** 이 계정의 Price List API 에는
+  레거시 Claude 5종만 존재해 자동 확인이 불가능했다. Sonnet 4.5~5,
+  Opus 4.5~5, Haiku 4.5, Fable 5 의 비용이 0으로 집계된다. 추측한 값을 넣지
+  않은 것은 의도적이다. 이 상태는 `unpriced_requests` 와 대시보드 경고로
+  드러난다. **단가가 없는 모델에 예산을 걸면 예산이 작동하지 않는다.**
+  메우는 방법은 `docs/models-claude.md` 5절에 있다.
+- 프리픽스 리스트 엔트리는 CloudFormation 이 관리하지 않는다. 재배포 없이
+  단말을 바꿀 수 있는 이유이면서, AWS CLI 로 직접 넓은 대역을 넣는 것이
+  가능하다는 뜻이다. 스모크 테스트의 검사가 마지막 그물이다.
+- `AccessListMaxEntries` 는 생성 후 늘릴 수만 있고 줄일 수 없다.
+
 ## [0.1.0] - 2026-08-24
 
 첫 릴리스.

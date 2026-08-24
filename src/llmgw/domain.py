@@ -259,6 +259,11 @@ class UsageTotals(_Base):
         latency_ms_sum: 지연 합. 평균 계산에 쓴다. DynamoDB 의 원자적 ADD
             로는 최댓값을 누적할 수 없어 최대·백분위 지연은 집계 테이블에
             두지 않고 CloudWatch 메트릭으로 본다.
+        unpriced_requests: 단가 표에 없는 모델로 처리된 요청 수. 이 값이
+            0이 아니면 `cost_usd` 가 실제 지출보다 작다. 비용 누락이 조용히
+            지나가지 않게 하려고 집계 축에 함께 넣는다. 예를 들어 새 Claude
+            모델이 추가됐는데 `pricing.json` 을 갱신하지 않은 경우 여기에
+            잡힌다.
     """
 
     requests: int = 0
@@ -268,6 +273,7 @@ class UsageTotals(_Base):
     output_tokens: int = 0
     cost_usd: decimal.Decimal = decimal.Decimal("0")
     latency_ms_sum: int = 0
+    unpriced_requests: int = 0
 
     @property
     def total_tokens(self) -> int:
@@ -288,6 +294,15 @@ class UsageTotals(_Base):
             return 0.0
         return self.error_requests / self.requests
 
+    @property
+    def is_cost_complete(self) -> bool:
+        """비용 합계가 모든 요청을 반영하는지 여부.
+
+        `False` 면 단가를 모르는 모델이 섞여 있어 `cost_usd` 가 실제 지출보다
+        작다. 대시보드는 이 값을 근거로 경고를 표시한다.
+        """
+        return self.unpriced_requests == 0
+
     def merged_with(self, other: UsageTotals) -> UsageTotals:
         """다른 집계값과 합산한 새 객체를 반환한다.
 
@@ -307,6 +322,9 @@ class UsageTotals(_Base):
             output_tokens=self.output_tokens + other.output_tokens,
             cost_usd=self.cost_usd + other.cost_usd,
             latency_ms_sum=self.latency_ms_sum + other.latency_ms_sum,
+            unpriced_requests=(
+                self.unpriced_requests + other.unpriced_requests
+            ),
         )
 
     def to_api_dict(self) -> dict[str, typing.Any]:
@@ -328,6 +346,8 @@ class UsageTotals(_Base):
             "cost_usd": float(self.cost_usd),
             "avg_latency_ms": self.avg_latency_ms,
             "error_rate": round(self.error_rate, 6),
+            "unpriced_requests": self.unpriced_requests,
+            "cost_complete": self.is_cost_complete,
         }
 
 

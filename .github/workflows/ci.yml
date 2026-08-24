@@ -91,6 +91,19 @@ jobs:
           sudo apt-get install -y -qq shellcheck
           shellcheck scripts/*.sh
 
+  secrets:
+    name: 시크릿 검사
+    runs-on: ubuntu-24.04
+    steps:
+      - name: 소스 체크아웃
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          # 히스토리 전체를 검사하려면 얕은 클론이면 안 된다.
+          fetch-depth: 0
+
+      - name: 시크릿 스캔 (히스토리 포함)
+        run: ./scripts/scan_secrets.sh --history
+
   image:
     name: 컨테이너 이미지 빌드
     runs-on: ubuntu-24.04

@@ -338,6 +338,8 @@ def test_timeseries_데이터없는날도0으로채운다(
         "cost_usd": 0.0,
         "avg_latency_ms": 0,
         "error_rate": 0.0,
+        "unpriced_requests": 0,
+        "cost_complete": True,
     }
 
 

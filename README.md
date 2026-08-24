@@ -23,6 +23,7 @@ AWS 자격증명만 있으면 명령 하나로 VPC 부터 DynamoDB 까지 전부
 - [아키텍처](#아키텍처)
 - [사전 요구사항](#사전-요구사항)
 - [배포](#배포)
+- [접근 통제 (다중 단말)](#접근-통제-다중-단말)
 - [사용법](#사용법)
 - [모니터링 대시보드](#모니터링-대시보드)
 - [로컬 실행](#로컬-실행)
@@ -142,8 +143,20 @@ cd LLMGateway
 ./scripts/deploy.sh --allowed-cidr "$(curl -s https://checkip.amazonaws.com)/32"
 ```
 
-`--allowed-cidr` 는 **필수**다. `0.0.0.0/0` 과 모든 `/0` 프리픽스는 스크립트와
-CloudFormation 파라미터 정규식 양쪽에서 거부된다.
+`--allowed-cidr` 는 **필수**이고 여러 번 지정할 수 있다. `0.0.0.0/0` 과 모든
+`/0` 프리픽스는 거부된다.
+
+배포 후 단말 추가·삭제는 **스택 재배포 없이** 수 초 안에 끝난다.
+
+```bash
+./scripts/manage_access.sh add-me --label "재택-노트북"
+./scripts/manage_access.sh add 203.0.113.0/28 --label "본사-사무실"
+./scripts/manage_access.sh list
+./scripts/manage_access.sh remove 198.51.100.5/32
+./scripts/manage_access.sh check     # 지금 이 단말이 접근 가능한지
+```
+
+자세한 내용은 [접근 통제](#접근-통제-다중-단말) 절을 본다.
 
 스크립트가 하는 일:
 
@@ -168,8 +181,9 @@ CloudFormation 파라미터 정규식 양쪽에서 거부된다.
   --certificate-arn arn:aws:acm:us-east-1:<계정ID>:certificate/<ID> \
   --alarm-email ops@example.com
 
-# 두 번째 단말 IP 추가
-./scripts/deploy.sh --allowed-cidr 203.0.113.10/32 --allowed-cidr-2 198.51.100.5/32
+# 여러 단말을 한 번에 열고 배포
+./scripts/deploy.sh --allowed-cidr 203.0.113.10/32 \
+                    --allowed-cidr 198.51.100.5/32
 
 # 허용 모델을 좁힌 기본 정책
 ./scripts/deploy.sh --allowed-cidr 203.0.113.10/32 \
@@ -179,6 +193,63 @@ CloudFormation 파라미터 정규식 양쪽에서 거부된다.
 전체 옵션은 `./scripts/deploy.sh --help` 로 확인한다.
 
 ---
+
+## 접근 통제 (다중 단말)
+
+ALB 보안 그룹은 **관리형 프리픽스 리스트 하나**만 참조한다. 단말이 몇 개든
+보안 그룹 규칙은 프로토콜당 1개로 유지되고, 단말을 추가·삭제해도
+CloudFormation 스택 업데이트가 필요 없다. 반영은 보통 수 초다.
+
+프리픽스 리스트는 **빈 상태로 생성**된다. 즉 아무도 접근할 수 없는 상태에서
+시작하고, 명시적으로 추가한 단말만 통과한다.
+
+```bash
+# 지금 이 단말 추가 (공인 IP 를 자동으로 /32 로)
+./scripts/manage_access.sh add-me --label "재택-노트북"
+
+# 특정 CIDR 추가
+./scripts/manage_access.sh add 203.0.113.10/32 --label "사무실-맥북"
+./scripts/manage_access.sh add 198.51.100.0/28 --label "본사-대역"
+
+# 목록 확인
+./scripts/manage_access.sh list
+
+# 제거
+./scripts/manage_access.sh remove 203.0.113.10/32
+
+# 지금 이 단말이 접근 가능한지 (실제 HTTP 호출까지 확인)
+./scripts/manage_access.sh check
+
+# 전체 상태 점검 (0.0.0.0/0 규칙 존재 여부 포함)
+./scripts/manage_access.sh status
+```
+
+출력 예시:
+
+```
+== 접근 허용 단말 (llmgw-dev-app)
+   프리픽스 리스트 pl-0abc123def456
+
+   CIDR                   설명
+   ---------------------- ------------------------
+   192.0.2.10/32          bootstrap by deploy.sh
+   203.0.113.10/32        사무실-맥북
+   198.51.100.0/28        본사-대역
+
+   사용 3 / 최대 20
+```
+
+### 제약과 주의점
+
+- 한도는 `AccessListMaxEntries`(기본 20)다. **생성 후 늘릴 수만 있고 줄일 수
+  없다.** 늘리려면 파라미터를 바꿔 재배포한다.
+- `0.0.0.0/0` 과 `/8` 보다 넓은 대역은 스크립트가 거부한다.
+- 프리픽스 리스트 엔트리는 CloudFormation 이 관리하지 않는다. 이것이
+  재배포 없이 단말을 바꿀 수 있는 이유이고, 동시에 AWS CLI 로 직접 넓은 대역을
+  넣는 것이 가능하다는 뜻이다. `smoke_test.sh` 가 매 배포마다 `0.0.0.0/0`
+  인바운드 규칙이 없는지 검사한다.
+- 보안 그룹 규칙을 콘솔에서 직접 고치지 않는다. 다음 배포에서 되돌아간다.
+
 
 ## 사용법
 
@@ -418,8 +489,7 @@ LLMGW_BASE_URL="$GATEWAY_URL" LLMGW_ADMIN_TOKEN="$ADMIN_TOKEN" \
 
 | 파라미터 | 기본값 | 설명 |
 |---|---|---|
-| `AllowedIngressCidr1` | **없음(필수)** | ALB 접근 허용 CIDR. `/0` 은 정규식이 거부 |
-| `AllowedIngressCidr2`, `3` | 빈 값 | 추가 허용 CIDR |
+| `AccessListMaxEntries` | `20` | 접근 허용 목록 최대 항목 수. 생성 후 늘릴 수만 있다 |
 | `CertificateArn` | 빈 값 | ACM 인증서. 주면 HTTPS + HTTP→HTTPS 리다이렉트 |
 | `DesiredCount` | `1` | 상시 태스크 수. prod 는 2 이상 권장 |
 | `MaxCount` | `4` | 오토스케일링 상한 (CPU 60% 목표 추적) |
@@ -510,13 +580,13 @@ CloudWatch 커스텀 네임스페이스 `LLMGateway`:
 
 | 증상 | 원인과 조치 |
 |---|---|
-| `/healthz` 에 연결되지 않음 | 접근 CIDR 이 현재 IP 와 다르다. `curl -s https://checkip.amazonaws.com` 로 확인 후 `--allowed-cidr-2` 에 추가해 재배포 |
+| `/healthz` 에 연결되지 않음 | 이 단말이 허용 목록에 없다. `./scripts/manage_access.sh check` 로 확인하고 `add-me` 로 추가한다 (재배포 불필요) |
 | `503 storage_unavailable` | DynamoDB 테이블이 없거나 태스크 역할 권한 부족. 응답 메시지의 AWS 코드를 확인 |
 | `403 model_not_allowed` | 키의 `allowed_models` 에 없는 모델. `GET /v1/models` 로 사용 가능 목록 확인 |
 | `403` + "Bedrock 모델 액세스" | 콘솔 Bedrock → Model access 에서 모델 활성화 |
 | `429 insufficient_quota` | 계정/팀/사용자/키 중 하나가 월 예산 초과. 대시보드에서 어느 축인지 확인 |
 | `404 model_not_found` | 모델이 EOL 이거나 해당 리전에 없다. `GET /admin/models` 로 확인 |
-| 대시보드 비용이 0 | 단가 표에 없는 모델이다. `GET /admin/models` 의 `pricing_known` 확인 후 `src/llmgw/pricing.json` 갱신 |
+| 대시보드 비용이 0 또는 '단가 미등록 N건' 경고 | 단가 표에 없는 모델이다. `./.venv/bin/python scripts/sync_pricing.py` 로 점검한다. 현행 Claude 가 여기 해당한다 ([상세](docs/models-claude.md#5-비용-집계와-단가-표의-현재-한계)) |
 | 태스크가 계속 재시작 | `aws logs tail /ecs/llmgw-dev --since 15m` 확인. 배포 서킷 브레이커가 자동 롤백한다 |
 
 더 자세한 절차는 [`docs/runbook.md`](docs/runbook.md) 를 본다.
@@ -540,8 +610,9 @@ CloudWatch 커스텀 네임스페이스 `LLMGateway`:
 
 ## 보안상 알아야 할 점
 
-- **ALB 는 인터넷에 노출된다.** 접근 CIDR 을 반드시 좁게 지정한다. `/0` 은 거부되지만
-  `1.0.0.0/8` 처럼 넓은 대역은 여전히 지정할 수 있다.
+- **ALB 는 인터넷에 노출된다.** 접근 허용 목록은 빈 상태로 시작하고 명시적으로
+  추가한 단말만 통과한다. `/0` 과 `/8` 보다 넓은 대역은 스크립트가 거부하지만,
+  `/8`~`/16` 수준의 넓은 대역은 여전히 지정할 수 있으니 최소 범위로 유지한다.
 - **인증서를 주지 않으면 HTTP 로만 서비스한다.** API 키와 관리 토큰이 평문으로
   전송된다. 검증 목적으로만 쓰고, 실사용 전에 ACM 인증서를 발급해
   `--certificate-arn` 으로 재배포한다.
@@ -565,6 +636,9 @@ CloudWatch 커스텀 네임스페이스 `LLMGateway`:
 | 문서 | 내용 |
 |---|---|
 | [`docs/architecture.md`](docs/architecture.md) | 컴포넌트, 데이터 모델, 요청 흐름, 확장 한계 |
+| [`docs/models-claude.md`](docs/models-claude.md) | Claude 모델 연동. 추론 프로파일 필수 조건, 단가 갭, 미지원 기능 |
+| [`docs/bedrock-endpoints.md`](docs/bedrock-endpoints.md) | `bedrock-runtime` vs `bedrock-mantle`, 네이티브 OpenAI API 와의 관계 |
+| [`SECURITY.md`](SECURITY.md) | 시크릿 관리, 접근 통제, IAM, 데이터 보호 |
 | [`docs/runbook.md`](docs/runbook.md) | 배포·롤백·알람 대응·프로덕션 전환 절차 |
 | [`docs/adr/0001-compute-ecs-fargate.md`](docs/adr/0001-compute-ecs-fargate.md) | 컴퓨트로 Fargate 를 고른 이유 |
 | [`docs/adr/0002-datastore-dynamodb.md`](docs/adr/0002-datastore-dynamodb.md) | DynamoDB 선택과 단일 트랜잭션 집계 설계 |

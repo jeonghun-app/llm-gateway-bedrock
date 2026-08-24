@@ -24,10 +24,21 @@ AWSTemplateFormatVersion: "2010-09-09"
 #   IP 로 직접 접근할 수는 없다. 아웃바운드는 443 과 DNS 로 제한했다.
 #   프로덕션 전환 시 판단 근거와 변경 절차는 docs/adr/0003 을 참고한다.
 #
+# 접근 통제 설계
+#   ALB 보안 그룹은 관리형 프리픽스 리스트 하나만 참조한다. 단말이 몇 개든
+#   보안 그룹 규칙은 프로토콜당 1개로 유지되고, 단말 추가·삭제에 스택 업데이트가
+#   필요 없다. 엔트리를 이 템플릿에서 관리하지 않는 이유는 AccessPrefixList
+#   리소스 주석에 적어 두었다.
+#
+#   프리픽스 리스트는 빈 상태로 생성된다. 즉 아무도 접근할 수 없는 상태에서
+#   시작한다. 초기 엔트리는 `scripts/deploy.sh --allowed-cidr` 가 넣고, 이후
+#   관리는 `scripts/manage_access.sh` 가 한다. 두 스크립트 모두 0.0.0.0/0 과
+#   모든 /0 프리픽스를 거부하며, 스모크 테스트가 매 배포마다 전체 개방 규칙이
+#   없는지 검사한다.
+#
 # 보안상 반드시 알아야 할 점
-#   ALB 는 인터넷에 노출된다. 접근 CIDR 을 파라미터로 반드시 지정해야 하고
-#   `/0` 프리픽스는 정규식에서 거부된다. 인증서를 주지 않으면 리스너가
-#   HTTP 로만 열려 API 키가 평문으로 전송된다. 검증 목적으로만 쓴다.
+#   ALB 는 인터넷에 노출된다. 인증서를 주지 않으면 리스너가 HTTP 로만 열려
+#   API 키가 평문으로 전송된다. 검증 목적으로만 쓴다.
 
 Description: >-
   LLM Gateway - ECS Fargate + ALB + DynamoDB + 모니터링 대시보드
@@ -65,28 +76,15 @@ Parameters:
       이미지를 가져올 ECR 리포지토리 ARN. 태스크 실행 역할 권한을 이
       리포지토리로만 좁히는 데 쓴다. ecr 스택의 RepositoryArn 출력값.
 
-  AllowedIngressCidr1:
-    Type: String
-    # 첫 옥텟에 0 을 허용하지 않고 프리픽스는 1~32 만 받는다. 이 조합이
-    # 0.0.0.0/0 과 모든 /0 표기를 문법 수준에서 거부한다. 전체 공개가
-    # 필요하면 이 파라미터를 고치는 것이 아니라 의도를 다시 검토해야 한다.
-    AllowedPattern: "^(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[1-9])\\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])\\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])\\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])/(3[0-2]|[12][0-9]|[1-9])$"
-    ConstraintDescription: >-
-      1.2.3.4/32 형태여야 한다. 0.0.0.0/0 과 /0 프리픽스는 허용되지 않는다.
+  AccessListMaxEntries:
+    Type: Number
+    Default: 20
+    MinValue: 1
+    MaxValue: 100
     Description: >-
-      ALB 접근을 허용할 CIDR (필수). 접속할 단말의 공인 IP /32 를 권장한다.
-
-  AllowedIngressCidr2:
-    Type: String
-    Default: ""
-    AllowedPattern: "^$|^(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[1-9])\\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])\\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])\\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])/(3[0-2]|[12][0-9]|[1-9])$"
-    Description: 추가 허용 CIDR (선택). 빈 값이면 규칙을 만들지 않는다.
-
-  AllowedIngressCidr3:
-    Type: String
-    Default: ""
-    AllowedPattern: "^$|^(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[1-9])\\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])\\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])\\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])/(3[0-2]|[12][0-9]|[1-9])$"
-    Description: 추가 허용 CIDR (선택).
+      접근 허용 목록(관리형 프리픽스 리스트)에 등록할 수 있는 최대 항목 수.
+      생성 후에는 늘릴 수만 있고 줄일 수 없다. 보안 그룹 규칙 한도를
+      소비하므로 필요 이상으로 크게 잡지 않는다.
 
   CertificateArn:
     Type: String
@@ -203,8 +201,6 @@ Parameters:
 
 Conditions:
   HasCertificate: !Not [!Equals [!Ref CertificateArn, ""]]
-  HasCidr2: !Not [!Equals [!Ref AllowedIngressCidr2, ""]]
-  HasCidr3: !Not [!Equals [!Ref AllowedIngressCidr3, ""]]
   HasAlarmEmail: !Not [!Equals [!Ref AlarmEmail, ""]]
   HasBedrockRegion: !Not [!Equals [!Ref BedrockRegion, ""]]
 
@@ -350,62 +346,56 @@ Resources:
   # -------------------------------------------------------------------------
   # 보안 그룹
   # -------------------------------------------------------------------------
+  # 접근 허용 목록. 관리형 프리픽스 리스트 하나를 보안 그룹이 참조하므로
+  # 단말이 몇 개든 보안 그룹 규칙은 프로토콜당 1개로 유지된다.
+  #
+  # 엔트리를 이 템플릿에서 관리하지 않는 것은 의도적이다. `Entries` 속성을
+  # 명시하면 단말을 추가할 때마다 스택 업데이트가 필요하고, 스택 밖에서 바꾼
+  # 값이 다음 배포에서 되돌아간다. 속성을 생략하면 CloudFormation 이 엔트리를
+  # 조정하지 않아 `scripts/manage_access.sh` 가 재배포 없이 즉시 반영할 수 있다.
+  # 이 동작은 실제 스택 업데이트로 확인했다.
+  #
+  # 최초 엔트리(AllowedIngressCidr1)는 배포 스크립트가 넣는다. 리소스 생성과
+  # 동시에 넣을 방법이 없어(CloudFormation 이 Entries 를 관리하지 않으므로)
+  # 스택 생성 직후 스크립트가 채운다.
+  AccessPrefixList:
+    Type: AWS::EC2::PrefixList
+    Properties:
+      PrefixListName: !Sub "${ProjectName}-${Environment}-allowed-sources"
+      AddressFamily: IPv4
+      MaxEntries: !Ref AccessListMaxEntries
+      Tags:
+        - Key: Name
+          Value: !Sub "${ProjectName}-${Environment}-allowed-sources"
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Owner
+          Value: !Ref Owner
+        - Key: ManagedBy
+          Value: cloudformation
+
   AlbSecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
       GroupDescription: !Sub "${ProjectName}-${Environment} ALB inbound"
       VpcId: !Ref Vpc
       SecurityGroupIngress:
+        # 프리픽스 리스트가 비어 있으면 어떤 출처도 통과하지 못한다.
+        # 열려 있는 상태로 시작하지 않는 것이 안전한 기본값이다.
         - IpProtocol: tcp
           FromPort: 80
           ToPort: 80
-          CidrIp: !Ref AllowedIngressCidr1
-          Description: allowed CIDR 1 - HTTP
-        - !If
-          - HasCidr2
-          - IpProtocol: tcp
-            FromPort: 80
-            ToPort: 80
-            CidrIp: !Ref AllowedIngressCidr2
-            Description: allowed CIDR 2 - HTTP
-          - !Ref AWS::NoValue
-        - !If
-          - HasCidr3
-          - IpProtocol: tcp
-            FromPort: 80
-            ToPort: 80
-            CidrIp: !Ref AllowedIngressCidr3
-            Description: allowed CIDR 3 - HTTP
-          - !Ref AWS::NoValue
+          SourcePrefixListId: !Ref AccessPrefixList
+          Description: allowed sources prefix list - HTTP
         - !If
           - HasCertificate
           - IpProtocol: tcp
             FromPort: 443
             ToPort: 443
-            CidrIp: !Ref AllowedIngressCidr1
-            Description: allowed CIDR 1 - HTTPS
-          - !Ref AWS::NoValue
-        - !If
-          - HasCertificate
-          - !If
-            - HasCidr2
-            - IpProtocol: tcp
-              FromPort: 443
-              ToPort: 443
-              CidrIp: !Ref AllowedIngressCidr2
-              Description: allowed CIDR 2 - HTTPS
-            - !Ref AWS::NoValue
-          - !Ref AWS::NoValue
-        - !If
-          - HasCertificate
-          - !If
-            - HasCidr3
-            - IpProtocol: tcp
-              FromPort: 443
-              ToPort: 443
-              CidrIp: !Ref AllowedIngressCidr3
-              Description: allowed CIDR 3 - HTTPS
-            - !Ref AWS::NoValue
+            SourcePrefixListId: !Ref AccessPrefixList
+            Description: allowed sources prefix list - HTTPS
           - !Ref AWS::NoValue
       # 태스크 보안 그룹을 참조하면 순환 의존이 생긴다. VPC 내부 8080 으로
       # 좁히는 것으로 같은 효과를 얻는다.
@@ -1209,3 +1199,13 @@ Outputs:
   VpcId:
     Description: 생성된 VPC
     Value: !Ref Vpc
+
+  AccessPrefixListId:
+    Description: >-
+      접근 허용 목록(관리형 프리픽스 리스트) ID. 단말 추가·삭제:
+      ./scripts/manage_access.sh add <CIDR> --label <설명>
+    Value: !Ref AccessPrefixList
+
+  AccessListMaxEntries:
+    Description: 접근 허용 목록의 최대 항목 수
+    Value: !Ref AccessListMaxEntries
