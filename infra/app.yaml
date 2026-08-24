@@ -1,0 +1,1211 @@
+AWSTemplateFormatVersion: "2010-09-09"
+
+# LLM Gateway 애플리케이션 스택.
+#
+# 이 템플릿 하나가 네트워크부터 데이터 저장소까지 전부 만든다. 기존 VPC나
+# 콘솔에서 미리 만들어 둔 리소스에 의존하지 않는다. AWS 자격증명만 있으면
+# `scripts/deploy.sh` 한 번으로 설치가 끝나는 것이 설계 목표다.
+#
+# 만드는 것
+#   네트워크  VPC, 퍼블릭 서브넷 2개, IGW, 라우팅, S3/DynamoDB 게이트웨이
+#             엔드포인트, 보안 그룹 2개
+#   컴퓨트    ECS Fargate 클러스터, 태스크 정의, 서비스, Application Auto
+#             Scaling
+#   진입점    Application Load Balancer, 타깃 그룹, 리스너
+#   저장소    DynamoDB 3개 (registry / usage / usage-agg)
+#   시크릿    Secrets Manager 에 관리 토큰 자동 생성
+#   관측      CloudWatch 로그 그룹, 알람 4개, SNS 토픽
+#
+# 네트워크 설계 판단
+#   태스크를 퍼블릭 서브넷에 두고 공인 IP 를 붙인다. 프라이빗 서브넷 +
+#   NAT Gateway 구성이 보안상 낫지만 NAT 하나가 월 40 USD 수준이고, 대안인
+#   인터페이스 엔드포인트(ECR API/DKR, Logs, Bedrock)도 4개면 월 30 USD 가
+#   넘는다. 인바운드는 태스크 보안 그룹이 ALB 보안 그룹만 허용하므로 공인
+#   IP 로 직접 접근할 수는 없다. 아웃바운드는 443 과 DNS 로 제한했다.
+#   프로덕션 전환 시 판단 근거와 변경 절차는 docs/adr/0003 을 참고한다.
+#
+# 보안상 반드시 알아야 할 점
+#   ALB 는 인터넷에 노출된다. 접근 CIDR 을 파라미터로 반드시 지정해야 하고
+#   `/0` 프리픽스는 정규식에서 거부된다. 인증서를 주지 않으면 리스너가
+#   HTTP 로만 열려 API 키가 평문으로 전송된다. 검증 목적으로만 쓴다.
+
+Description: >-
+  LLM Gateway - ECS Fargate + ALB + DynamoDB + 모니터링 대시보드
+
+Parameters:
+  ProjectName:
+    Type: String
+    Default: llmgw
+    AllowedPattern: "^[a-z][a-z0-9-]{1,30}$"
+    Description: 리소스 이름 접두어.
+
+  Environment:
+    Type: String
+    Default: dev
+    AllowedValues: [dev, stg, prod]
+    Description: 배포 환경.
+
+  Owner:
+    Type: String
+    Default: platform-team
+    MinLength: 1
+    Description: 소유자 태그 값.
+
+  ImageUri:
+    Type: String
+    MinLength: 1
+    Description: >-
+      ECS 가 실행할 컨테이너 이미지 URI. 태그를 포함한다.
+      예: 123456789012.dkr.ecr.us-east-1.amazonaws.com/llmgw-dev:abc1234
+
+  EcrRepositoryArn:
+    Type: String
+    MinLength: 1
+    Description: >-
+      이미지를 가져올 ECR 리포지토리 ARN. 태스크 실행 역할 권한을 이
+      리포지토리로만 좁히는 데 쓴다. ecr 스택의 RepositoryArn 출력값.
+
+  AllowedIngressCidr1:
+    Type: String
+    # 첫 옥텟에 0 을 허용하지 않고 프리픽스는 1~32 만 받는다. 이 조합이
+    # 0.0.0.0/0 과 모든 /0 표기를 문법 수준에서 거부한다. 전체 공개가
+    # 필요하면 이 파라미터를 고치는 것이 아니라 의도를 다시 검토해야 한다.
+    AllowedPattern: "^(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[1-9])\\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])\\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])\\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])/(3[0-2]|[12][0-9]|[1-9])$"
+    ConstraintDescription: >-
+      1.2.3.4/32 형태여야 한다. 0.0.0.0/0 과 /0 프리픽스는 허용되지 않는다.
+    Description: >-
+      ALB 접근을 허용할 CIDR (필수). 접속할 단말의 공인 IP /32 를 권장한다.
+
+  AllowedIngressCidr2:
+    Type: String
+    Default: ""
+    AllowedPattern: "^$|^(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[1-9])\\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])\\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])\\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])/(3[0-2]|[12][0-9]|[1-9])$"
+    Description: 추가 허용 CIDR (선택). 빈 값이면 규칙을 만들지 않는다.
+
+  AllowedIngressCidr3:
+    Type: String
+    Default: ""
+    AllowedPattern: "^$|^(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[1-9])\\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])\\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])\\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])/(3[0-2]|[12][0-9]|[1-9])$"
+    Description: 추가 허용 CIDR (선택).
+
+  CertificateArn:
+    Type: String
+    Default: ""
+    Description: >-
+      ACM 인증서 ARN (선택). 지정하면 HTTPS 리스너를 만들고 HTTP 를 HTTPS 로
+      리다이렉트한다. 비우면 HTTP 만 열리고 API 키가 평문 전송된다.
+
+  VpcCidr:
+    Type: String
+    Default: 10.60.0.0/16
+    AllowedPattern: "^(10|172|192)\\.[0-9]{1,3}\\.[0-9]{1,3}\\.[0-9]{1,3}/(1[6-9]|2[0-4])$"
+    Description: 새로 만들 VPC 의 CIDR. 사설 대역이어야 한다.
+
+  PublicSubnet1Cidr:
+    Type: String
+    Default: 10.60.0.0/20
+    Description: 첫 번째 퍼블릭 서브넷 CIDR.
+
+  PublicSubnet2Cidr:
+    Type: String
+    Default: 10.60.16.0/20
+    Description: 두 번째 퍼블릭 서브넷 CIDR.
+
+  TaskCpu:
+    Type: String
+    Default: "512"
+    AllowedValues: ["256", "512", "1024", "2048", "4096"]
+    Description: 태스크 CPU 유닛. 1024 = 1 vCPU.
+
+  TaskMemory:
+    Type: String
+    Default: "1024"
+    AllowedValues: ["512", "1024", "2048", "3072", "4096", "8192"]
+    Description: 태스크 메모리(MiB). CPU 값과 호환되는 조합이어야 한다.
+
+  DesiredCount:
+    Type: Number
+    Default: 1
+    MinValue: 1
+    MaxValue: 20
+    Description: >-
+      상시 실행 태스크 수. 프로덕션은 AZ 장애를 견디도록 2 이상을 쓴다.
+      기본값 1 은 dev 비용을 낮추기 위한 선택이다.
+
+  MaxCount:
+    Type: Number
+    Default: 4
+    MinValue: 1
+    MaxValue: 50
+    Description: 오토스케일링 상한.
+
+  LogRetentionDays:
+    Type: Number
+    Default: 30
+    AllowedValues: [1, 3, 5, 7, 14, 30, 60, 90, 180, 365]
+    Description: CloudWatch 로그 보존 기간(일). 무한 보존은 허용하지 않는다.
+
+  LogLevel:
+    Type: String
+    Default: INFO
+    AllowedValues: [DEBUG, INFO, WARNING, ERROR]
+    Description: 애플리케이션 로그 레벨.
+
+  BedrockRegion:
+    Type: String
+    Default: ""
+    Description: >-
+      Bedrock 호출 리전 (선택). 비우면 스택 리전을 쓴다. 모델 가용성이
+      리전마다 달라 분리할 수 있게 두었다.
+
+  DefaultAllowedModels:
+    Type: String
+    Default: ""
+    Description: >-
+      API 키에 허용 모델이 지정되지 않았을 때 적용할 기본 목록. 쉼표로
+      구분한다. 비우면 모든 모델을 허용한다.
+
+  UsageTtlDays:
+    Type: Number
+    Default: 90
+    MinValue: 1
+    MaxValue: 3650
+    Description: >-
+      usage 원본 레코드 보존 기간(일). 집계 테이블은 만료되지 않으므로
+      대시보드 수치는 이 기간이 지나도 유지된다.
+
+  AllowedBedrockModelArn:
+    Type: String
+    Default: "arn:aws:bedrock:*::foundation-model/*"
+    Description: >-
+      태스크 역할이 호출할 수 있는 기반 모델 ARN 패턴. 게이트웨이는 계정에서
+      활성화된 임의 모델을 중계하는 것이 목적이라 기본값이 와일드카드다.
+      특정 모델만 허용하려면 여기를 좁힌다.
+
+  Alarm5xxThreshold:
+    Type: Number
+    Default: 5
+    MinValue: 1
+    Description: 5분간 5xx 응답 수 알람 임계값.
+
+  AlarmLatencyP99Seconds:
+    Type: Number
+    Default: 30
+    MinValue: 1
+    Description: p99 응답 시간 알람 임계값(초).
+
+  AlarmEmail:
+    Type: String
+    Default: ""
+    Description: >-
+      알람 수신 이메일 (선택). 지정하면 SNS 구독이 생기고 확인 메일이
+      발송된다. 확인을 눌러야 알림이 도착한다.
+
+Conditions:
+  HasCertificate: !Not [!Equals [!Ref CertificateArn, ""]]
+  HasCidr2: !Not [!Equals [!Ref AllowedIngressCidr2, ""]]
+  HasCidr3: !Not [!Equals [!Ref AllowedIngressCidr3, ""]]
+  HasAlarmEmail: !Not [!Equals [!Ref AlarmEmail, ""]]
+  HasBedrockRegion: !Not [!Equals [!Ref BedrockRegion, ""]]
+
+Resources:
+  # -------------------------------------------------------------------------
+  # 네트워크
+  # -------------------------------------------------------------------------
+  Vpc:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: !Ref VpcCidr
+      EnableDnsSupport: true
+      # 태스크가 AWS 엔드포인트를 DNS 로 찾아야 하므로 반드시 켠다.
+      EnableDnsHostnames: true
+      Tags:
+        - Key: Name
+          Value: !Sub "${ProjectName}-${Environment}-vpc"
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Owner
+          Value: !Ref Owner
+        - Key: ManagedBy
+          Value: cloudformation
+
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: !Sub "${ProjectName}-${Environment}-igw"
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Owner
+          Value: !Ref Owner
+        - Key: ManagedBy
+          Value: cloudformation
+
+  InternetGatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref Vpc
+      InternetGatewayId: !Ref InternetGateway
+
+  PublicSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      CidrBlock: !Ref PublicSubnet1Cidr
+      AvailabilityZone: !Select [0, !GetAZs ""]
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: !Sub "${ProjectName}-${Environment}-public-1"
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Owner
+          Value: !Ref Owner
+        - Key: ManagedBy
+          Value: cloudformation
+
+  PublicSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      CidrBlock: !Ref PublicSubnet2Cidr
+      AvailabilityZone: !Select [1, !GetAZs ""]
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: !Sub "${ProjectName}-${Environment}-public-2"
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Owner
+          Value: !Ref Owner
+        - Key: ManagedBy
+          Value: cloudformation
+
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref Vpc
+      Tags:
+        - Key: Name
+          Value: !Sub "${ProjectName}-${Environment}-public-rt"
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Owner
+          Value: !Ref Owner
+        - Key: ManagedBy
+          Value: cloudformation
+
+  DefaultPublicRoute:
+    Type: AWS::EC2::Route
+    DependsOn: InternetGatewayAttachment
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+
+  PublicSubnet1RouteAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnet1
+      RouteTableId: !Ref PublicRouteTable
+
+  PublicSubnet2RouteAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnet2
+      RouteTableId: !Ref PublicRouteTable
+
+  # 게이트웨이 엔드포인트는 시간당 과금이 없다. DynamoDB 트래픽과 ECR
+  # 이미지 레이어(S3에 저장된다)가 인터넷을 거치지 않게 되어 지연과 데이터
+  # 전송 비용이 함께 줄어든다.
+  DynamoDbEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !Ref Vpc
+      ServiceName: !Sub "com.amazonaws.${AWS::Region}.dynamodb"
+      VpcEndpointType: Gateway
+      RouteTableIds:
+        - !Ref PublicRouteTable
+
+  S3Endpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !Ref Vpc
+      ServiceName: !Sub "com.amazonaws.${AWS::Region}.s3"
+      VpcEndpointType: Gateway
+      RouteTableIds:
+        - !Ref PublicRouteTable
+
+  # -------------------------------------------------------------------------
+  # 보안 그룹
+  # -------------------------------------------------------------------------
+  AlbSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: !Sub "${ProjectName}-${Environment} ALB inbound"
+      VpcId: !Ref Vpc
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: !Ref AllowedIngressCidr1
+          Description: allowed CIDR 1 - HTTP
+        - !If
+          - HasCidr2
+          - IpProtocol: tcp
+            FromPort: 80
+            ToPort: 80
+            CidrIp: !Ref AllowedIngressCidr2
+            Description: allowed CIDR 2 - HTTP
+          - !Ref AWS::NoValue
+        - !If
+          - HasCidr3
+          - IpProtocol: tcp
+            FromPort: 80
+            ToPort: 80
+            CidrIp: !Ref AllowedIngressCidr3
+            Description: allowed CIDR 3 - HTTP
+          - !Ref AWS::NoValue
+        - !If
+          - HasCertificate
+          - IpProtocol: tcp
+            FromPort: 443
+            ToPort: 443
+            CidrIp: !Ref AllowedIngressCidr1
+            Description: allowed CIDR 1 - HTTPS
+          - !Ref AWS::NoValue
+        - !If
+          - HasCertificate
+          - !If
+            - HasCidr2
+            - IpProtocol: tcp
+              FromPort: 443
+              ToPort: 443
+              CidrIp: !Ref AllowedIngressCidr2
+              Description: allowed CIDR 2 - HTTPS
+            - !Ref AWS::NoValue
+          - !Ref AWS::NoValue
+        - !If
+          - HasCertificate
+          - !If
+            - HasCidr3
+            - IpProtocol: tcp
+              FromPort: 443
+              ToPort: 443
+              CidrIp: !Ref AllowedIngressCidr3
+              Description: allowed CIDR 3 - HTTPS
+            - !Ref AWS::NoValue
+          - !Ref AWS::NoValue
+      # 태스크 보안 그룹을 참조하면 순환 의존이 생긴다. VPC 내부 8080 으로
+      # 좁히는 것으로 같은 효과를 얻는다.
+      SecurityGroupEgress:
+        - IpProtocol: tcp
+          FromPort: 8080
+          ToPort: 8080
+          CidrIp: !Ref VpcCidr
+          # ALB 는 컨테이너 포트로만 전달한다.
+          Description: forward to container port only
+      Tags:
+        - Key: Name
+          Value: !Sub "${ProjectName}-${Environment}-alb-sg"
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Owner
+          Value: !Ref Owner
+        - Key: ManagedBy
+          Value: cloudformation
+
+  TaskSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: !Sub "${ProjectName}-${Environment} Fargate tasks"
+      VpcId: !Ref Vpc
+      SecurityGroupIngress:
+        # 태스크에 공인 IP 가 붙지만 인바운드는 ALB 보안 그룹만 허용한다.
+        # 인터넷에서 컨테이너 포트로 직접 접근할 수 없다.
+        - IpProtocol: tcp
+          FromPort: 8080
+          ToPort: 8080
+          SourceSecurityGroupId: !Ref AlbSecurityGroup
+          # 인바운드는 ALB 보안 그룹에서만 받는다.
+          Description: inbound from ALB security group only
+      SecurityGroupEgress:
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+          # ECR, Bedrock, CloudWatch Logs 호출용. 리전 엔드포인트는
+          # 공인 IP 대역이라 특정 CIDR 로 좁힐 수 없다.
+          Description: outbound HTTPS to AWS service endpoints
+        - IpProtocol: udp
+          FromPort: 53
+          ToPort: 53
+          CidrIp: !Ref VpcCidr
+          Description: VPC resolver DNS
+        - IpProtocol: tcp
+          FromPort: 53
+          ToPort: 53
+          CidrIp: !Ref VpcCidr
+          Description: VPC resolver DNS over TCP
+      Tags:
+        - Key: Name
+          Value: !Sub "${ProjectName}-${Environment}-task-sg"
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Owner
+          Value: !Ref Owner
+        - Key: ManagedBy
+          Value: cloudformation
+
+  # -------------------------------------------------------------------------
+  # DynamoDB
+  # -------------------------------------------------------------------------
+  # 세 테이블 모두 온디맨드 과금이라 유휴 상태에서 비용이 발생하지 않는다.
+  #
+  # DeletionPolicy 가 Delete 인 것은 이 스택이 dev 검증과 데모를 1순위
+  # 목적으로 하기 때문이다. 프로덕션으로 쓰려면 세 테이블의 DeletionPolicy 와
+  # UpdateReplacePolicy 를 Retain 으로 바꿔야 한다. 자세한 절차는
+  # docs/runbook.md 의 "프로덕션 전환 체크리스트" 를 참고한다.
+  RegistryTable:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      TableName: !Sub "${ProjectName}-${Environment}-registry"
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: pk
+          AttributeType: S
+        - AttributeName: sk
+          AttributeType: S
+        - AttributeName: gsi1pk
+          AttributeType: S
+        - AttributeName: gsi1sk
+          AttributeType: S
+      KeySchema:
+        - AttributeName: pk
+          KeyType: HASH
+        - AttributeName: sk
+          KeyType: RANGE
+      GlobalSecondaryIndexes:
+        # 계정 전체 목록과 계정별 API 키 목록을 스캔 없이 읽기 위한 인덱스.
+        - IndexName: gsi1
+          KeySchema:
+            - AttributeName: gsi1pk
+              KeyType: HASH
+            - AttributeName: gsi1sk
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+      SSESpecification:
+        # AWS 관리형 KMS 키를 쓴다. 기본(AWS 소유 키)보다 감사 추적이
+        # 명확한 대신 KMS 요청 비용이 추가된다.
+        SSEEnabled: true
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Owner
+          Value: !Ref Owner
+        - Key: ManagedBy
+          Value: cloudformation
+
+  UsageTable:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      TableName: !Sub "${ProjectName}-${Environment}-usage"
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: pk
+          AttributeType: S
+        - AttributeName: sk
+          AttributeType: S
+        - AttributeName: ts
+          AttributeType: S
+      KeySchema:
+        # pk = <account_id>#<YYYY-MM-DD>, sk = <request_id>
+        # 정렬 키를 요청 ID 로 둔 것이 멱등성의 근거다. 같은 요청을 두 번
+        # 기록하려 하면 조건부 쓰기가 실패한다.
+        - AttributeName: pk
+          KeyType: HASH
+        - AttributeName: sk
+          KeyType: RANGE
+      LocalSecondaryIndexes:
+        # 시간 역순 조회용. LSI 는 테이블 생성 시점에만 만들 수 있다.
+        - IndexName: lsi_ts
+          KeySchema:
+            - AttributeName: pk
+              KeyType: HASH
+            - AttributeName: ts
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+      TimeToLiveSpecification:
+        AttributeName: expires_at
+        Enabled: true
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+      SSESpecification:
+        SSEEnabled: true
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Owner
+          Value: !Ref Owner
+        - Key: ManagedBy
+          Value: cloudformation
+
+  UsageAggTable:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      TableName: !Sub "${ProjectName}-${Environment}-usage-agg"
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: pk
+          AttributeType: S
+        - AttributeName: sk
+          AttributeType: S
+      KeySchema:
+        # pk = <account_id>#DAY#<YYYY-MM-DD> 또는 <account_id>#MONTH#<YYYY-MM>
+        # sk = TOTAL | TEAM#.. | USER#.. | MODEL#.. | KEY#..
+        - AttributeName: pk
+          KeyType: HASH
+        - AttributeName: sk
+          KeyType: RANGE
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+      SSESpecification:
+        SSEEnabled: true
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Owner
+          Value: !Ref Owner
+        - Key: ManagedBy
+          Value: cloudformation
+
+  # -------------------------------------------------------------------------
+  # 시크릿
+  # -------------------------------------------------------------------------
+  AdminTokenSecret:
+    Type: AWS::SecretsManager::Secret
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Retain
+    Properties:
+      Name: !Sub "${ProjectName}/${Environment}/admin-token"
+      Description: >-
+        관리 API 와 대시보드 인증 토큰. CloudFormation 이 생성하며 사람이
+        값을 정하지 않는다. 코드나 파라미터에 평문으로 남지 않는다.
+      GenerateSecretString:
+        SecretStringTemplate: '{"description":"llmgw admin token"}'
+        GenerateStringKey: admin_token
+        PasswordLength: 40
+        # HTTP 헤더와 셸 인용에서 문제를 일으키지 않도록 특수문자를 뺀다.
+        # 40자 영숫자는 약 206비트로 충분한 강도다.
+        ExcludePunctuation: true
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Owner
+          Value: !Ref Owner
+        - Key: ManagedBy
+          Value: cloudformation
+
+  # -------------------------------------------------------------------------
+  # IAM
+  # -------------------------------------------------------------------------
+  TaskExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${ProjectName}-${Environment}-task-exec"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+            Condition:
+              # 다른 계정이 이 역할을 빌려 쓰지 못하게 소유 계정을 못박는다.
+              StringEquals:
+                aws:SourceAccount: !Ref AWS::AccountId
+      Policies:
+        - PolicyName: pull-image-and-write-logs
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: EcrAuthToken
+                Effect: Allow
+                # ecr:GetAuthorizationToken 은 리소스 단위 제한을 지원하지
+                # 않는다. AWS 서비스 제약이라 좁힐 수 없다.
+                Action: ecr:GetAuthorizationToken
+                Resource: "*"
+              - Sid: EcrPullThisRepositoryOnly
+                Effect: Allow
+                Action:
+                  - ecr:BatchCheckLayerAvailability
+                  - ecr:GetDownloadUrlForLayer
+                  - ecr:BatchGetImage
+                Resource: !Ref EcrRepositoryArn
+              - Sid: WriteOwnLogGroup
+                Effect: Allow
+                Action:
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: !Sub "${LogGroup.Arn}:*"
+              - Sid: ReadAdminTokenSecret
+                Effect: Allow
+                Action: secretsmanager:GetSecretValue
+                Resource: !Ref AdminTokenSecret
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Owner
+          Value: !Ref Owner
+        - Key: ManagedBy
+          Value: cloudformation
+
+  TaskRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${ProjectName}-${Environment}-task"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+            Condition:
+              StringEquals:
+                aws:SourceAccount: !Ref AWS::AccountId
+      Policies:
+        - PolicyName: gateway-runtime
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: DynamoDbDataAccess
+                Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                  - dynamodb:BatchGetItem
+                  - dynamodb:Query
+                  - dynamodb:PutItem
+                  - dynamodb:UpdateItem
+                  - dynamodb:DeleteItem
+                  - dynamodb:TransactWriteItems
+                Resource:
+                  - !GetAtt RegistryTable.Arn
+                  - !Sub "${RegistryTable.Arn}/index/*"
+                  - !GetAtt UsageTable.Arn
+                  - !Sub "${UsageTable.Arn}/index/*"
+                  - !GetAtt UsageAggTable.Arn
+              - Sid: BedrockInvoke
+                Effect: Allow
+                Action:
+                  - bedrock:InvokeModel
+                  - bedrock:InvokeModelWithResponseStream
+                Resource:
+                  - !Ref AllowedBedrockModelArn
+                  # 크로스리전 추론 프로파일은 프로파일 ARN 과 기반 모델
+                  # ARN 양쪽 권한이 필요하다.
+                  - !Sub "arn:${AWS::Partition}:bedrock:${AWS::Region}:${AWS::AccountId}:inference-profile/*"
+                  - !Sub "arn:${AWS::Partition}:bedrock:*:${AWS::AccountId}:inference-profile/*"
+              - Sid: BedrockListModels
+                Effect: Allow
+                # 목록 조회 API 는 리소스 단위 제한을 지원하지 않는다.
+                # 읽기 전용이며 모델 메타데이터만 반환한다.
+                Action:
+                  - bedrock:ListFoundationModels
+                  - bedrock:ListInferenceProfiles
+                Resource: "*"
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Owner
+          Value: !Ref Owner
+        - Key: ManagedBy
+          Value: cloudformation
+
+  # -------------------------------------------------------------------------
+  # 로깅
+  # -------------------------------------------------------------------------
+  LogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      LogGroupName: !Sub "/ecs/${ProjectName}-${Environment}"
+      RetentionInDays: !Ref LogRetentionDays
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Owner
+          Value: !Ref Owner
+        - Key: ManagedBy
+          Value: cloudformation
+
+  # -------------------------------------------------------------------------
+  # 로드 밸런서
+  # -------------------------------------------------------------------------
+  LoadBalancer:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Name: !Sub "${ProjectName}-${Environment}-alb"
+      Type: application
+      Scheme: internet-facing
+      SecurityGroups:
+        - !Ref AlbSecurityGroup
+      Subnets:
+        - !Ref PublicSubnet1
+        - !Ref PublicSubnet2
+      LoadBalancerAttributes:
+        - Key: idle_timeout.timeout_seconds
+          # LLM 응답은 길다. 스트리밍 연결이 60초 기본값에서 끊기지 않도록
+          # 늘린다. 컨테이너의 keep-alive 타임아웃(65초)보다 짧게 유지해
+          # ALB 가 먼저 정리하도록 한다.
+          Value: "60"
+        - Key: routing.http.drop_invalid_header_fields.enabled
+          Value: "true"
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Owner
+          Value: !Ref Owner
+        - Key: ManagedBy
+          Value: cloudformation
+
+  TargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Name: !Sub "${ProjectName}-${Environment}-tg"
+      VpcId: !Ref Vpc
+      Port: 8080
+      Protocol: HTTP
+      # awsvpc 네트워크 모드의 Fargate 태스크는 IP 로 등록된다.
+      TargetType: ip
+      HealthCheckPath: /healthz
+      HealthCheckProtocol: HTTP
+      HealthCheckIntervalSeconds: 30
+      HealthCheckTimeoutSeconds: 5
+      HealthyThresholdCount: 2
+      UnhealthyThresholdCount: 3
+      Matcher:
+        HttpCode: "200"
+      TargetGroupAttributes:
+        - Key: deregistration_delay.timeout_seconds
+          # 기본 300초는 배포가 불필요하게 길어진다. 이 서비스는 긴 요청이
+          # 스트리밍뿐이고 그마저 수십 초 수준이라 30초로 줄인다.
+          Value: "30"
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Owner
+          Value: !Ref Owner
+        - Key: ManagedBy
+          Value: cloudformation
+
+  HttpListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      LoadBalancerArn: !Ref LoadBalancer
+      Port: 80
+      Protocol: HTTP
+      DefaultActions:
+        - !If
+          - HasCertificate
+          # 인증서가 있으면 평문 접근을 허용하지 않는다.
+          - Type: redirect
+            RedirectConfig:
+              Protocol: HTTPS
+              Port: "443"
+              StatusCode: HTTP_301
+          - Type: forward
+            TargetGroupArn: !Ref TargetGroup
+
+  HttpsListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Condition: HasCertificate
+    Properties:
+      LoadBalancerArn: !Ref LoadBalancer
+      Port: 443
+      Protocol: HTTPS
+      Certificates:
+        - CertificateArn: !Ref CertificateArn
+      SslPolicy: ELBSecurityPolicy-TLS13-1-2-2021-06
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref TargetGroup
+
+  # -------------------------------------------------------------------------
+  # ECS
+  # -------------------------------------------------------------------------
+  Cluster:
+    Type: AWS::ECS::Cluster
+    Properties:
+      ClusterName: !Sub "${ProjectName}-${Environment}"
+      ClusterSettings:
+        # Container Insights 는 컨테이너 단위 메트릭을 추가로 과금한다.
+        # 서비스 단위 CPU/메모리 메트릭은 AWS/ECS 네임스페이스에서 무료로
+        # 얻을 수 있어 기본은 끈다. 필요하면 enhanced 로 바꾼다.
+        - Name: containerInsights
+          Value: disabled
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Owner
+          Value: !Ref Owner
+        - Key: ManagedBy
+          Value: cloudformation
+
+  TaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: !Sub "${ProjectName}-${Environment}"
+      RequiresCompatibilities:
+        - FARGATE
+      NetworkMode: awsvpc
+      Cpu: !Ref TaskCpu
+      Memory: !Ref TaskMemory
+      RuntimePlatform:
+        OperatingSystemFamily: LINUX
+        # 빌드 호스트가 x86_64 다. Dockerfile 주석의 판단 근거를 참고한다.
+        CpuArchitecture: X86_64
+      ExecutionRoleArn: !GetAtt TaskExecutionRole.Arn
+      TaskRoleArn: !GetAtt TaskRole.Arn
+      ContainerDefinitions:
+        - Name: gateway
+          Image: !Ref ImageUri
+          Essential: true
+          PortMappings:
+            - ContainerPort: 8080
+              Protocol: tcp
+          Environment:
+            - Name: LLMGW_ENV
+              Value: !Ref Environment
+            - Name: LLMGW_AWS_REGION
+              Value: !Ref AWS::Region
+            - Name: LLMGW_BEDROCK_REGION
+              Value: !If
+                - HasBedrockRegion
+                - !Ref BedrockRegion
+                - !Ref AWS::Region
+            - Name: LLMGW_REGISTRY_TABLE
+              Value: !Ref RegistryTable
+            - Name: LLMGW_USAGE_TABLE
+              Value: !Ref UsageTable
+            - Name: LLMGW_USAGE_AGG_TABLE
+              Value: !Ref UsageAggTable
+            - Name: LLMGW_DEFAULT_ALLOWED_MODELS
+              Value: !Ref DefaultAllowedModels
+            - Name: LLMGW_USAGE_TTL_DAYS
+              Value: !Ref UsageTtlDays
+            - Name: LLMGW_LOG_LEVEL
+              Value: !Ref LogLevel
+            - Name: LLMGW_SERVICE_NAME
+              Value: !Sub "${ProjectName}-${Environment}"
+            - Name: LLMGW_METRICS_NAMESPACE
+              Value: LLMGateway
+          Secrets:
+            # 토큰이 태스크 정의에 평문으로 남지 않는다. ECS 가 실행 시점에
+            # Secrets Manager 에서 읽어 환경변수로 주입한다.
+            - Name: LLMGW_ADMIN_TOKEN
+              ValueFrom: !Sub "${AdminTokenSecret}:admin_token::"
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref LogGroup
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: gateway
+          # EMF 메트릭이 CloudWatch Logs 로 나가야 하므로 로그 드라이버가
+          # 필수다. 헬스 체크는 ALB 타깃 그룹이 담당한다.
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Owner
+          Value: !Ref Owner
+        - Key: ManagedBy
+          Value: cloudformation
+
+  Service:
+    Type: AWS::ECS::Service
+    # 리스너가 준비되기 전에 서비스를 만들면 타깃 등록이 실패한다.
+    DependsOn:
+      - HttpListener
+    Properties:
+      ServiceName: !Sub "${ProjectName}-${Environment}"
+      Cluster: !Ref Cluster
+      TaskDefinition: !Ref TaskDefinition
+      LaunchType: FARGATE
+      DesiredCount: !Ref DesiredCount
+      PlatformVersion: LATEST
+      # 컨테이너 기동과 첫 헬스 체크 통과까지 여유를 준다. 짧으면 정상
+      # 기동 중인 태스크를 비정상으로 판정해 교체 루프에 빠진다.
+      HealthCheckGracePeriodSeconds: 60
+      DeploymentConfiguration:
+        MinimumHealthyPercent: 100
+        MaximumPercent: 200
+        DeploymentCircuitBreaker:
+          # 새 태스크가 계속 실패하면 배포를 중단하고 되돌린다. 없으면
+          # 스택 업데이트가 타임아웃까지 몇 시간 매달린다.
+          Enable: true
+          Rollback: true
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          # NAT 없이 ECR/Bedrock 에 나가기 위해 공인 IP 를 붙인다.
+          # 인바운드는 보안 그룹이 ALB 만 허용한다.
+          AssignPublicIp: ENABLED
+          Subnets:
+            - !Ref PublicSubnet1
+            - !Ref PublicSubnet2
+          SecurityGroups:
+            - !Ref TaskSecurityGroup
+      LoadBalancers:
+        - ContainerName: gateway
+          ContainerPort: 8080
+          TargetGroupArn: !Ref TargetGroup
+      PropagateTags: SERVICE
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Owner
+          Value: !Ref Owner
+        - Key: ManagedBy
+          Value: cloudformation
+
+  ScalableTarget:
+    Type: AWS::ApplicationAutoScaling::ScalableTarget
+    Properties:
+      ServiceNamespace: ecs
+      ScalableDimension: ecs:service:DesiredCount
+      ResourceId: !Sub "service/${Cluster}/${Service.Name}"
+      MinCapacity: !Ref DesiredCount
+      MaxCapacity: !Ref MaxCount
+      RoleARN: !Sub "arn:${AWS::Partition}:iam::${AWS::AccountId}:role/aws-service-role/ecs.application-autoscaling.amazonaws.com/AWSServiceRoleForApplicationAutoScaling_ECSService"
+
+  CpuScalingPolicy:
+    Type: AWS::ApplicationAutoScaling::ScalingPolicy
+    Properties:
+      PolicyName: !Sub "${ProjectName}-${Environment}-cpu-target"
+      PolicyType: TargetTrackingScaling
+      ScalingTargetId: !Ref ScalableTarget
+      TargetTrackingScalingPolicyConfiguration:
+        PredefinedMetricSpecification:
+          PredefinedMetricType: ECSServiceAverageCPUUtilization
+        TargetValue: 60
+        ScaleInCooldown: 300
+        ScaleOutCooldown: 60
+
+  # -------------------------------------------------------------------------
+  # 알람
+  # -------------------------------------------------------------------------
+  AlarmTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Sub "${ProjectName}-${Environment}-alarms"
+      DisplayName: !Sub "${ProjectName} ${Environment} 알람"
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Owner
+          Value: !Ref Owner
+        - Key: ManagedBy
+          Value: cloudformation
+
+  AlarmEmailSubscription:
+    Type: AWS::SNS::Subscription
+    Condition: HasAlarmEmail
+    Properties:
+      TopicArn: !Ref AlarmTopic
+      Protocol: email
+      Endpoint: !Ref AlarmEmail
+
+  Alarm5xx:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "${ProjectName}-${Environment}-alb-5xx"
+      AlarmDescription: >-
+        ALB 또는 타깃이 5xx 를 반환하고 있다. 태스크 로그를 확인한다.
+      Namespace: AWS/ApplicationELB
+      MetricName: HTTPCode_Target_5XX_Count
+      Dimensions:
+        - Name: LoadBalancer
+          Value: !GetAtt LoadBalancer.LoadBalancerFullName
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: !Ref Alarm5xxThreshold
+      ComparisonOperator: GreaterThanThreshold
+      # 트래픽이 없으면 데이터가 없다. 그 상태를 장애로 보지 않는다.
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref AlarmTopic
+      OKActions:
+        - !Ref AlarmTopic
+
+  AlarmLatency:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "${ProjectName}-${Environment}-latency-p99"
+      AlarmDescription: >-
+        p99 응답 시간이 임계값을 넘었다. Bedrock 지연이나 태스크 포화를
+        확인한다.
+      Namespace: AWS/ApplicationELB
+      MetricName: TargetResponseTime
+      Dimensions:
+        - Name: LoadBalancer
+          Value: !GetAtt LoadBalancer.LoadBalancerFullName
+      ExtendedStatistic: p99
+      Period: 300
+      EvaluationPeriods: 2
+      Threshold: !Ref AlarmLatencyP99Seconds
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref AlarmTopic
+
+  AlarmUnhealthyTargets:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "${ProjectName}-${Environment}-unhealthy-targets"
+      AlarmDescription: >-
+        비정상 타깃이 있다. 태스크가 기동 실패하거나 헬스 체크를 통과하지
+        못하는 상태다.
+      Namespace: AWS/ApplicationELB
+      MetricName: UnHealthyHostCount
+      Dimensions:
+        - Name: LoadBalancer
+          Value: !GetAtt LoadBalancer.LoadBalancerFullName
+        - Name: TargetGroup
+          Value: !GetAtt TargetGroup.TargetGroupFullName
+      Statistic: Maximum
+      Period: 60
+      EvaluationPeriods: 3
+      Threshold: 0
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref AlarmTopic
+
+  AlarmUsageWriteFailures:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "${ProjectName}-${Environment}-usage-write-failures"
+      AlarmDescription: >-
+        사용량 기록이 실패해 집계가 유실되고 있다. 동기 API 라 DLQ 를 걸
+        큐가 없어 이 알람이 유실 감지 수단이다. DynamoDB 스로틀링과 태스크
+        역할 권한을 확인한다.
+      Namespace: LLMGateway
+      MetricName: UsageWriteFailures
+      Dimensions:
+        - Name: Environment
+          Value: !Ref Environment
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 0
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref AlarmTopic
+
+Outputs:
+  GatewayUrl:
+    Description: >-
+      게이트웨이 기본 URL. OpenAI 클라이언트의 base_url 로 쓴다.
+    Value: !If
+      - HasCertificate
+      - !Sub "https://${LoadBalancer.DNSName}"
+      - !Sub "http://${LoadBalancer.DNSName}"
+
+  DashboardUrl:
+    Description: 모니터링 대시보드 URL
+    Value: !If
+      - HasCertificate
+      - !Sub "https://${LoadBalancer.DNSName}/ui/"
+      - !Sub "http://${LoadBalancer.DNSName}/ui/"
+
+  AdminTokenSecretArn:
+    Description: >-
+      관리 토큰 시크릿 ARN. 값 조회:
+      aws secretsmanager get-secret-value --secret-id <arn>
+      --query SecretString --output text
+    Value: !Ref AdminTokenSecret
+
+  ClusterName:
+    Description: ECS 클러스터 이름
+    Value: !Ref Cluster
+
+  ServiceName:
+    Description: ECS 서비스 이름
+    Value: !GetAtt Service.Name
+
+  LogGroupName:
+    Description: 태스크 로그 그룹
+    Value: !Ref LogGroup
+
+  RegistryTableName:
+    Description: 계정·팀·사용자·키 테이블
+    Value: !Ref RegistryTable
+
+  UsageTableName:
+    Description: 요청 단위 사용량 테이블
+    Value: !Ref UsageTable
+
+  UsageAggTableName:
+    Description: 사용량 집계 테이블
+    Value: !Ref UsageAggTable
+
+  AlarmTopicArn:
+    Description: 알람 SNS 토픽
+    Value: !Ref AlarmTopic
+
+  VpcId:
+    Description: 생성된 VPC
+    Value: !Ref Vpc

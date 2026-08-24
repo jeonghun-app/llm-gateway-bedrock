@@ -1,0 +1,103 @@
+AWSTemplateFormatVersion: "2010-09-09"
+
+# LLM Gateway 컨테이너 레지스트리 스택.
+#
+# 애플리케이션 스택과 분리한 이유는 순서 의존성 때문이다. ECS 서비스는
+# ECR 에 이미지가 이미 있어야 태스크를 시작할 수 있다. 그래서 배포는
+# 이 스택 생성 → 이미지 빌드/푸시 → 애플리케이션 스택 생성 순서로 진행한다.
+#
+# 이 스택은 애플리케이션 스택을 지웠다 다시 만들어도 유지된다. 이미지를
+# 다시 빌드/푸시하지 않고 재배포할 수 있게 하기 위한 것이다.
+
+Description: >-
+  LLM Gateway - ECR 레지스트리 (이미지 스캔, 태그 불변성, 라이프사이클)
+
+Parameters:
+  ProjectName:
+    Type: String
+    Default: llmgw
+    AllowedPattern: "^[a-z][a-z0-9-]{1,30}$"
+    Description: 리소스 이름 접두어. 소문자와 하이픈만 쓴다.
+
+  Environment:
+    Type: String
+    Default: dev
+    AllowedValues: [dev, stg, prod]
+    Description: 배포 환경. 리소스 이름에 포함된다.
+
+  Owner:
+    Type: String
+    Default: platform-team
+    MinLength: 1
+    Description: 비용 귀속과 문의 대상을 표시하는 소유자 태그 값.
+
+  ImageRetentionCount:
+    Type: Number
+    Default: 10
+    MinValue: 1
+    MaxValue: 100
+    Description: >-
+      보관할 최신 이미지 개수. 초과분은 라이프사이클 정책이 만료시킨다.
+
+Resources:
+  Repository:
+    Type: AWS::ECR::Repository
+    # 애플리케이션 스택을 지워도 이미지는 남긴다. 재배포 시 이미지를 다시
+    # 빌드하지 않아도 되고, 롤백 대상 이미지가 사라지지 않는다.
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      RepositoryName: !Sub "${ProjectName}-${Environment}"
+      # 같은 태그로 덮어쓰면 배포된 이미지가 무엇인지 추적할 수 없다.
+      # 배포 스크립트는 커밋 SHA 기반의 유일한 태그를 만들어 푸시한다.
+      ImageTagMutability: IMMUTABLE
+      ImageScanningConfiguration:
+        ScanOnPush: true
+      EncryptionConfiguration:
+        # AES256 은 추가 비용이 없다. KMS 로 바꾸면 이미지 레이어 접근마다
+        # KMS 요청 비용이 발생한다.
+        EncryptionType: AES256
+      LifecyclePolicy:
+        LifecyclePolicyText: !Sub |
+          {
+            "rules": [
+              {
+                "rulePriority": 1,
+                "description": "최신 ${ImageRetentionCount}개만 보관한다.",
+                "selection": {
+                  "tagStatus": "any",
+                  "countType": "imageCountMoreThan",
+                  "countNumber": ${ImageRetentionCount}
+                },
+                "action": { "type": "expire" }
+              }
+            ]
+          }
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Owner
+          Value: !Ref Owner
+        - Key: ManagedBy
+          Value: cloudformation
+
+Outputs:
+  RepositoryName:
+    Description: ECR 리포지토리 이름
+    Value: !Ref Repository
+    Export:
+      Name: !Sub "${AWS::StackName}-RepositoryName"
+
+  RepositoryUri:
+    Description: docker push 대상 URI
+    Value: !Sub "${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${Repository}"
+    Export:
+      Name: !Sub "${AWS::StackName}-RepositoryUri"
+
+  RepositoryArn:
+    Description: 태스크 실행 역할 정책에 사용할 ARN
+    Value: !GetAtt Repository.Arn
+    Export:
+      Name: !Sub "${AWS::StackName}-RepositoryArn"
