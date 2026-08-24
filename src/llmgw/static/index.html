@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>LLM Gateway 모니터링</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<a class="skip-link" href="#main">본문으로 건너뛰기</a>
+
+<header class="topbar">
+  <div class="brand">
+    <span class="brand-mark" aria-hidden="true">◆</span>
+    <h1>LLM Gateway 모니터링</h1>
+  </div>
+  <p class="brand-sub">Amazon Bedrock · 계정 / 팀 / 사용자 / 모델별 사용량</p>
+</header>
+
+<section class="controls" aria-label="조회 조건">
+  <div class="field">
+    <label for="admin-token">관리 토큰</label>
+    <input type="password" id="admin-token" autocomplete="off"
+           placeholder="X-Admin-Token" spellcheck="false">
+  </div>
+  <div class="field">
+    <label for="account-select">계정</label>
+    <select id="account-select">
+      <option value="">토큰 입력 후 불러오기</option>
+    </select>
+  </div>
+  <div class="field">
+    <label for="start-date">시작일</label>
+    <input type="date" id="start-date">
+  </div>
+  <div class="field">
+    <label for="end-date">종료일</label>
+    <input type="date" id="end-date">
+  </div>
+  <div class="field field-quick">
+    <span id="quick-range-label">기간 프리셋</span>
+    <div class="quick-buttons" role="group" aria-labelledby="quick-range-label">
+      <button type="button" data-days="1">오늘</button>
+      <button type="button" data-days="7">7일</button>
+      <button type="button" data-days="30">30일</button>
+      <button type="button" data-days="90">90일</button>
+    </div>
+  </div>
+  <div class="field field-actions">
+    <button type="button" id="refresh-button" class="primary">조회</button>
+    <label class="checkbox">
+      <input type="checkbox" id="auto-refresh">
+      자동 새로고침 (30초)
+    </label>
+  </div>
+</section>
+
+<p id="status-line" class="status" role="status" aria-live="polite"></p>
+
+<main id="main">
+  <section aria-labelledby="kpi-heading">
+    <h2 id="kpi-heading" class="section-heading">요약</h2>
+    <div class="kpi-grid">
+      <article class="kpi">
+        <h3>요청 수</h3>
+        <p class="kpi-value" id="kpi-requests">-</p>
+        <p class="kpi-note" id="kpi-requests-note"></p>
+      </article>
+      <article class="kpi">
+        <h3>총 토큰</h3>
+        <p class="kpi-value" id="kpi-tokens">-</p>
+        <p class="kpi-note" id="kpi-tokens-note"></p>
+      </article>
+      <article class="kpi">
+        <h3>총 비용</h3>
+        <p class="kpi-value" id="kpi-cost">-</p>
+        <p class="kpi-note">USD</p>
+      </article>
+      <article class="kpi">
+        <h3>평균 지연</h3>
+        <p class="kpi-value" id="kpi-latency">-</p>
+        <p class="kpi-note">게이트웨이 관점</p>
+      </article>
+      <article class="kpi">
+        <h3>에러율</h3>
+        <p class="kpi-value" id="kpi-error-rate">-</p>
+        <p class="kpi-note" id="kpi-error-note"></p>
+      </article>
+    </div>
+  </section>
+
+  <section aria-labelledby="chart-heading">
+    <h2 id="chart-heading" class="section-heading">추이와 분포</h2>
+    <div class="chart-grid">
+      <article class="card card-wide">
+        <h3>일별 비용과 요청 수</h3>
+        <div id="chart-timeseries" class="chart"></div>
+      </article>
+      <article class="card">
+        <h3>팀별 비용</h3>
+        <div id="chart-teams" class="chart"></div>
+      </article>
+      <article class="card">
+        <h3>사용자별 비용 (상위 10)</h3>
+        <div id="chart-users" class="chart"></div>
+      </article>
+      <article class="card">
+        <h3>모델별 요청 비중</h3>
+        <div id="chart-models" class="chart"></div>
+      </article>
+    </div>
+  </section>
+
+  <section aria-labelledby="table-heading">
+    <h2 id="table-heading" class="section-heading">상세</h2>
+    <div class="tabs" role="tablist" aria-label="상세 보기 전환">
+      <button type="button" role="tab" id="tab-accounts"
+              aria-controls="panel-table" aria-selected="false"
+              data-view="accounts">계정</button>
+      <button type="button" role="tab" id="tab-team"
+              aria-controls="panel-table" aria-selected="true"
+              data-view="team">팀</button>
+      <button type="button" role="tab" id="tab-user"
+              aria-controls="panel-table" aria-selected="false"
+              data-view="user">사용자</button>
+      <button type="button" role="tab" id="tab-model"
+              aria-controls="panel-table" aria-selected="false"
+              data-view="model">모델</button>
+      <button type="button" role="tab" id="tab-key"
+              aria-controls="panel-table" aria-selected="false"
+              data-view="key">API 키</button>
+      <button type="button" role="tab" id="tab-requests"
+              aria-controls="panel-table" aria-selected="false"
+              data-view="requests">최근 요청</button>
+    </div>
+    <div id="panel-table" role="tabpanel" tabindex="0"
+         aria-labelledby="tab-team" class="table-wrap">
+      <table id="detail-table">
+        <caption id="table-caption">팀별 사용량</caption>
+        <thead><tr></tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </section>
+</main>
+
+<footer class="footer">
+  <p>
+    비용은 게이트웨이가 토큰 수와 자체 단가 표로 계산한 추정치다. AWS 청구서와
+    다를 수 있다. 지연 백분위와 서비스 전체 메트릭은 CloudWatch
+    <code>LLMGateway</code> 네임스페이스에서 확인한다.
+  </p>
+</footer>
+
+<script src="charts.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

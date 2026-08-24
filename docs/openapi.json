@@ -1,0 +1,1922 @@
+{
+  "components": {
+    "schemas": {
+      "ChatCompletionRequest": {
+        "additionalProperties": true,
+        "description": "`POST /v1/chat/completions` 요청 본문.\n\nAttributes:\n    model: Bedrock 모델 ID 또는 추론 프로파일 ID.\n    messages: 대화 이력.\n    max_tokens: 최대 출력 토큰. OpenAI 의 구 필드명.\n    max_completion_tokens: 최대 출력 토큰. OpenAI 의 신 필드명.\n        둘 다 오면 이쪽을 우선한다.\n    temperature: 샘플링 온도.\n    top_p: 누적 확률 절단값.\n    stop: 정지 문자열 또는 목록.\n    stream: SSE 스트리밍 여부.\n    n: 생성할 후보 수. 1만 지원한다.\n    user: 호출자 식별 문자열. 사용량은 API 키로 귀속되므로 무시한다.",
+        "properties": {
+          "max_completion_tokens": {
+            "anyOf": [
+              {
+                "maximum": 200000.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Completion Tokens"
+          },
+          "max_tokens": {
+            "anyOf": [
+              {
+                "maximum": 200000.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Tokens"
+          },
+          "messages": {
+            "items": {
+              "$ref": "#/components/schemas/ChatMessage"
+            },
+            "minItems": 1,
+            "title": "Messages",
+            "type": "array"
+          },
+          "model": {
+            "minLength": 1,
+            "title": "Model",
+            "type": "string"
+          },
+          "n": {
+            "default": 1,
+            "maximum": 1.0,
+            "minimum": 1.0,
+            "title": "N",
+            "type": "integer"
+          },
+          "stop": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stop"
+          },
+          "stream": {
+            "default": false,
+            "title": "Stream",
+            "type": "boolean"
+          },
+          "temperature": {
+            "anyOf": [
+              {
+                "maximum": 2.0,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Temperature"
+          },
+          "top_p": {
+            "anyOf": [
+              {
+                "maximum": 1.0,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Top P"
+          },
+          "user": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "User"
+          }
+        },
+        "required": [
+          "model",
+          "messages"
+        ],
+        "title": "ChatCompletionRequest",
+        "type": "object"
+      },
+      "ChatMessage": {
+        "additionalProperties": true,
+        "description": "대화 메시지 한 건.\n\nAttributes:\n    role: `system`, `developer`, `user`, `assistant` 중 하나.\n    content: 문자열 또는 텍스트 조각 배열.\n    name: OpenAI 호환용 선택 필드. 변환에는 쓰지 않는다.",
+        "properties": {
+          "content": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "items": {
+                  "$ref": "#/components/schemas/ContentPart"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Content"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "role": {
+            "title": "Role",
+            "type": "string"
+          }
+        },
+        "required": [
+          "role"
+        ],
+        "title": "ChatMessage",
+        "type": "object"
+      },
+      "ContentPart": {
+        "additionalProperties": true,
+        "description": "멀티모달 메시지의 텍스트 조각.\n\nAttributes:\n    type: 조각 종류. 현재는 `text` 만 처리한다.\n    text: 텍스트 내용.",
+        "properties": {
+          "text": {
+            "default": "",
+            "title": "Text",
+            "type": "string"
+          },
+          "type": {
+            "default": "text",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "title": "ContentPart",
+        "type": "object"
+      },
+      "CreateAccountRequest": {
+        "additionalProperties": false,
+        "description": "계정 생성 요청.\n\nAttributes:\n    account_id: 소문자 영숫자와 하이픈으로 된 식별자.\n    name: 표시 이름.\n    monthly_budget_usd: 월 예산. 생략하면 무제한.",
+        "properties": {
+          "account_id": {
+            "pattern": "^[a-z0-9][a-z0-9-]{1,63}$",
+            "title": "Account Id",
+            "type": "string"
+          },
+          "monthly_budget_usd": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Monthly Budget Usd"
+          },
+          "name": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "account_id",
+          "name"
+        ],
+        "title": "CreateAccountRequest",
+        "type": "object"
+      },
+      "CreateApiKeyRequest": {
+        "additionalProperties": false,
+        "description": "API 키 발급 요청.\n\nAttributes:\n    user_id: 키를 귀속시킬 사용자 ID. 반드시 존재해야 한다.\n    name: 키 용도 메모.\n    allowed_models: 허용 모델 목록. 비어 있으면 서버 기본 정책을 따른다.\n    monthly_budget_usd: 키 월 예산.",
+        "properties": {
+          "allowed_models": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Allowed Models",
+            "type": "array"
+          },
+          "monthly_budget_usd": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Monthly Budget Usd"
+          },
+          "name": {
+            "default": "",
+            "title": "Name",
+            "type": "string"
+          },
+          "user_id": {
+            "minLength": 1,
+            "title": "User Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "user_id"
+        ],
+        "title": "CreateApiKeyRequest",
+        "type": "object"
+      },
+      "CreateTeamRequest": {
+        "additionalProperties": false,
+        "description": "팀 생성 요청.\n\nAttributes:\n    team_id: 계정 범위에서 유일한 팀 식별자.\n    name: 표시 이름.\n    monthly_budget_usd: 월 예산. 생략하면 계정 예산만 적용된다.",
+        "properties": {
+          "monthly_budget_usd": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Monthly Budget Usd"
+          },
+          "name": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "team_id": {
+            "pattern": "^[a-z0-9][a-z0-9-]{1,63}$",
+            "title": "Team Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "team_id",
+          "name"
+        ],
+        "title": "CreateTeamRequest",
+        "type": "object"
+      },
+      "CreateUserRequest": {
+        "additionalProperties": false,
+        "description": "사용자 생성 요청.\n\nAttributes:\n    user_id: 계정 범위에서 유일한 사용자 식별자.\n    name: 표시 이름.\n    email: 연락용 메일.\n    team_id: 소속 팀 ID.\n    monthly_budget_usd: 월 예산. 생략하면 상위 예산만 적용된다.",
+        "properties": {
+          "email": {
+            "default": "",
+            "title": "Email",
+            "type": "string"
+          },
+          "monthly_budget_usd": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Monthly Budget Usd"
+          },
+          "name": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "team_id": {
+            "default": "",
+            "title": "Team Id",
+            "type": "string"
+          },
+          "user_id": {
+            "pattern": "^[a-z0-9][a-z0-9._-]{1,63}$",
+            "title": "User Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "user_id",
+          "name"
+        ],
+        "title": "CreateUserRequest",
+        "type": "object"
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "title": "Detail",
+            "type": "array"
+          }
+        },
+        "title": "HTTPValidationError",
+        "type": "object"
+      },
+      "UpdateStatusRequest": {
+        "additionalProperties": false,
+        "description": "활성 상태 변경 요청.\n\nAttributes:\n    status: `active` 또는 `disabled`.",
+        "properties": {
+          "status": {
+            "enum": [
+              "active",
+              "disabled"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "title": "UpdateStatusRequest",
+        "type": "object"
+      },
+      "ValidationError": {
+        "properties": {
+          "ctx": {
+            "title": "Context",
+            "type": "object"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "title": "Location",
+            "type": "array"
+          },
+          "msg": {
+            "title": "Message",
+            "type": "string"
+          },
+          "type": {
+            "title": "Error Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError",
+        "type": "object"
+      }
+    }
+  },
+  "info": {
+    "description": "Amazon Bedrock 앞단의 OpenAI 호환 게이트웨이.\n\n- `POST /v1/chat/completions` — OpenAI Chat Completions 호환 (스트리밍 지원)\n- `GET /v1/models` — 호출 가능한 모델 목록\n- `/admin/*` — 계정·팀·사용자·API 키 관리 (`X-Admin-Token` 필요)\n- `/analytics/*` — 계정·팀·사용자·모델별 사용량 집계 (`X-Admin-Token` 필요)\n- `/ui` — 모니터링 대시보드",
+    "title": "LLM Gateway",
+    "version": "0.1.0"
+  },
+  "openapi": "3.1.0",
+  "paths": {
+    "/admin/accounts": {
+      "get": {
+        "description": "모든 계정을 반환한다.\n\nArgs:\n    services: 인증된 서비스 컨테이너.\n\nReturns:\n    계정 목록.",
+        "operationId": "list_accounts_admin_accounts_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-Admin-Token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Token"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response List Accounts Admin Accounts Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Accounts",
+        "tags": [
+          "admin"
+        ]
+      },
+      "post": {
+        "description": "계정을 만든다.\n\nArgs:\n    payload: 생성 요청.\n    services: 인증된 서비스 컨테이너.\n\nReturns:\n    생성된 계정.\n\nRaises:\n    ResourceConflictError: 같은 ID 의 계정이 이미 있는 경우.",
+        "operationId": "create_account_admin_accounts_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-Admin-Token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Token"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateAccountRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Create Account Admin Accounts Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Account",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/admin/accounts/{account_id}": {
+      "get": {
+        "description": "계정 하나를 반환한다.\n\nArgs:\n    account_id: 계정 ID.\n    services: 인증된 서비스 컨테이너.\n\nReturns:\n    계정 정보.\n\nRaises:\n    ResourceNotFoundError: 계정이 없는 경우.",
+        "operationId": "get_account_admin_accounts__account_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "account_id",
+            "required": true,
+            "schema": {
+              "title": "Account Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Admin-Token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Token"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Get Account Admin Accounts  Account Id  Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Account",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/admin/accounts/{account_id}/keys": {
+      "get": {
+        "description": "계정의 API 키 목록을 반환한다.\n\nArgs:\n    account_id: 계정 ID.\n    services: 인증된 서비스 컨테이너.\n\nReturns:\n    키 목록. 평문 키는 포함되지 않는다.",
+        "operationId": "list_api_keys_admin_accounts__account_id__keys_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "account_id",
+            "required": true,
+            "schema": {
+              "title": "Account Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Admin-Token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Token"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response List Api Keys Admin Accounts  Account Id  Keys Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Api Keys",
+        "tags": [
+          "admin"
+        ]
+      },
+      "post": {
+        "description": "API 키를 발급한다.\n\n팀 ID 는 요청에서 받지 않고 사용자 레코드에서 가져온다. 사용자와 키의\n팀이 어긋나면 집계가 사용자 축과 팀 축에서 서로 다른 값을 내기 때문이다.\n\nArgs:\n    account_id: 계정 ID.\n    payload: 발급 요청.\n    services: 인증된 서비스 컨테이너.\n\nReturns:\n    키 메타데이터와 평문 키(`api_key`). 평문은 이 응답에서만 볼 수 있다.\n\nRaises:\n    ResourceNotFoundError: 계정이나 사용자가 없는 경우.",
+        "operationId": "create_api_key_admin_accounts__account_id__keys_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "account_id",
+            "required": true,
+            "schema": {
+              "title": "Account Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Admin-Token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Token"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateApiKeyRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Create Api Key Admin Accounts  Account Id  Keys Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Api Key",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/admin/accounts/{account_id}/keys/{key_id}": {
+      "delete": {
+        "description": "API 키를 삭제한다.\n\nArgs:\n    account_id: 계정 ID.\n    key_id: 삭제할 키 ID.\n    services: 인증된 서비스 컨테이너.\n\nReturns:\n    본문 없는 204 응답.\n\nRaises:\n    ResourceNotFoundError: 해당 계정에 그 키가 없는 경우.",
+        "operationId": "delete_api_key_admin_accounts__account_id__keys__key_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "account_id",
+            "required": true,
+            "schema": {
+              "title": "Account Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "key_id",
+            "required": true,
+            "schema": {
+              "title": "Key Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Admin-Token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Token"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete Api Key",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/admin/accounts/{account_id}/status": {
+      "post": {
+        "description": "계정을 활성/비활성 전환한다.\n\n비활성 계정의 API 키는 모두 즉시 거부된다. 다만 인증 경로의 메타데이터\n캐시 TTL(기본 30초)만큼 반영이 지연될 수 있다.\n\nArgs:\n    account_id: 계정 ID.\n    payload: 변경 요청.\n    services: 인증된 서비스 컨테이너.\n\nReturns:\n    변경된 계정.\n\nRaises:\n    ResourceNotFoundError: 계정이 없는 경우.",
+        "operationId": "update_account_status_admin_accounts__account_id__status_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "account_id",
+            "required": true,
+            "schema": {
+              "title": "Account Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Admin-Token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Token"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateStatusRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Update Account Status Admin Accounts  Account Id  Status Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Update Account Status",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/admin/accounts/{account_id}/teams": {
+      "get": {
+        "description": "계정의 팀 목록을 반환한다.\n\nArgs:\n    account_id: 계정 ID.\n    services: 인증된 서비스 컨테이너.\n\nReturns:\n    팀 목록.",
+        "operationId": "list_teams_admin_accounts__account_id__teams_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "account_id",
+            "required": true,
+            "schema": {
+              "title": "Account Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Admin-Token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Token"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response List Teams Admin Accounts  Account Id  Teams Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Teams",
+        "tags": [
+          "admin"
+        ]
+      },
+      "post": {
+        "description": "팀을 만든다.\n\nArgs:\n    account_id: 계정 ID.\n    payload: 생성 요청.\n    services: 인증된 서비스 컨테이너.\n\nReturns:\n    생성된 팀.\n\nRaises:\n    ResourceNotFoundError: 계정이 없는 경우.\n    ResourceConflictError: 같은 팀 ID 가 이미 있는 경우.",
+        "operationId": "create_team_admin_accounts__account_id__teams_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "account_id",
+            "required": true,
+            "schema": {
+              "title": "Account Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Admin-Token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Token"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateTeamRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Create Team Admin Accounts  Account Id  Teams Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Team",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/admin/accounts/{account_id}/users": {
+      "get": {
+        "description": "계정의 사용자 목록을 반환한다.\n\nArgs:\n    account_id: 계정 ID.\n    services: 인증된 서비스 컨테이너.\n\nReturns:\n    사용자 목록.",
+        "operationId": "list_users_admin_accounts__account_id__users_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "account_id",
+            "required": true,
+            "schema": {
+              "title": "Account Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Admin-Token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Token"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response List Users Admin Accounts  Account Id  Users Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Users",
+        "tags": [
+          "admin"
+        ]
+      },
+      "post": {
+        "description": "사용자를 만든다.\n\nArgs:\n    account_id: 계정 ID.\n    payload: 생성 요청.\n    services: 인증된 서비스 컨테이너.\n\nReturns:\n    생성된 사용자.\n\nRaises:\n    ResourceNotFoundError: 계정이나 지정한 팀이 없는 경우.\n    ResourceConflictError: 같은 사용자 ID 가 이미 있는 경우.",
+        "operationId": "create_user_admin_accounts__account_id__users_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "account_id",
+            "required": true,
+            "schema": {
+              "title": "Account Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Admin-Token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Token"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateUserRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Create User Admin Accounts  Account Id  Users Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create User",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/admin/models": {
+      "get": {
+        "description": "Bedrock 에서 호출 가능한 모델 목록을 반환한다.\n\n키 발급 화면의 허용 모델 선택에 쓴다. 단가 표에 있는지 여부를 함께\n내려 보내 비용이 0으로 집계될 모델을 관리자가 알아볼 수 있게 한다.\n\nArgs:\n    services: 인증된 서비스 컨테이너.\n\nReturns:\n    모델 ID 와 단가 인지 여부 목록.",
+        "operationId": "list_bedrock_models_admin_models_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-Admin-Token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Token"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response List Bedrock Models Admin Models Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Bedrock Models",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/analytics/accounts": {
+      "get": {
+        "description": "모든 계정의 기간 합계를 반환한다.\n\nArgs:\n    services: 인증된 서비스 컨테이너.\n    start: `YYYY-MM-DD` 시작일.\n    end: `YYYY-MM-DD` 종료일.\n\nReturns:\n    기간 정보와 계정별 요약.\n\nRaises:\n    InvalidRequestError: 기간이 유효하지 않은 경우.",
+        "operationId": "accounts_overview_analytics_accounts_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "start",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Start"
+            }
+          },
+          {
+            "in": "query",
+            "name": "end",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "End"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Admin-Token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Token"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Accounts Overview Analytics Accounts Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Accounts Overview",
+        "tags": [
+          "analytics"
+        ]
+      }
+    },
+    "/analytics/breakdown": {
+      "get": {
+        "description": "계정의 축별 집계를 반환한다.\n\nArgs:\n    account_id: 계정 ID.\n    dimension: `team`, `user`, `model`, `key` 중 하나.\n    services: 인증된 서비스 컨테이너.\n    start: 시작일.\n    end: 종료일.\n\nReturns:\n    비용 내림차순 축별 집계.\n\nRaises:\n    InvalidRequestError: 축이나 기간이 유효하지 않은 경우.",
+        "operationId": "breakdown_analytics_breakdown_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "account_id",
+            "required": true,
+            "schema": {
+              "title": "Account Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "dimension",
+            "required": true,
+            "schema": {
+              "title": "Dimension",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "start",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Start"
+            }
+          },
+          {
+            "in": "query",
+            "name": "end",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "End"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Admin-Token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Token"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Breakdown Analytics Breakdown Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Breakdown",
+        "tags": [
+          "analytics"
+        ]
+      }
+    },
+    "/analytics/dashboard": {
+      "get": {
+        "description": "대시보드 한 화면에 필요한 모든 데이터를 한 번에 반환한다.\n\nArgs:\n    account_id: 계정 ID.\n    services: 인증된 서비스 컨테이너.\n    start: 시작일.\n    end: 종료일.\n    recent_limit: 최근 요청 표에 담을 건수.\n\nReturns:\n    요약, 시계열, 팀·사용자·모델·키 축 분해, 최근 요청.\n\nRaises:\n    InvalidRequestError: 기간이 유효하지 않은 경우.",
+        "operationId": "dashboard_analytics_dashboard_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "account_id",
+            "required": true,
+            "schema": {
+              "title": "Account Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "start",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Start"
+            }
+          },
+          {
+            "in": "query",
+            "name": "end",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "End"
+            }
+          },
+          {
+            "in": "query",
+            "name": "recent_limit",
+            "required": false,
+            "schema": {
+              "default": 25,
+              "title": "Recent Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Admin-Token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Token"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Dashboard Analytics Dashboard Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Dashboard",
+        "tags": [
+          "analytics"
+        ]
+      }
+    },
+    "/analytics/requests": {
+      "get": {
+        "description": "특정 날짜의 최근 요청 목록을 반환한다.\n\nArgs:\n    account_id: 계정 ID.\n    services: 인증된 서비스 컨테이너.\n    date: `YYYY-MM-DD` 조회 날짜. 생략하면 오늘.\n    limit: 최대 건수.\n\nReturns:\n    최신순 요청 목록.\n\nRaises:\n    InvalidRequestError: 날짜 형식이 잘못된 경우.",
+        "operationId": "recent_requests_analytics_requests_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "account_id",
+            "required": true,
+            "schema": {
+              "title": "Account Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "date",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Date"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 25,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Admin-Token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Token"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Recent Requests Analytics Requests Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Recent Requests",
+        "tags": [
+          "analytics"
+        ]
+      }
+    },
+    "/analytics/summary": {
+      "get": {
+        "description": "계정의 기간 합계를 반환한다.\n\nArgs:\n    account_id: 계정 ID.\n    services: 인증된 서비스 컨테이너.\n    start: 시작일.\n    end: 종료일.\n\nReturns:\n    KPI 수치.",
+        "operationId": "summary_analytics_summary_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "account_id",
+            "required": true,
+            "schema": {
+              "title": "Account Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "start",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Start"
+            }
+          },
+          {
+            "in": "query",
+            "name": "end",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "End"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Admin-Token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Token"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Summary Analytics Summary Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Summary",
+        "tags": [
+          "analytics"
+        ]
+      }
+    },
+    "/analytics/timeseries": {
+      "get": {
+        "description": "계정의 일별 시계열을 반환한다.\n\nArgs:\n    account_id: 계정 ID.\n    services: 인증된 서비스 컨테이너.\n    start: 시작일.\n    end: 종료일.\n\nReturns:\n    날짜 오름차순 시계열.",
+        "operationId": "timeseries_analytics_timeseries_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "account_id",
+            "required": true,
+            "schema": {
+              "title": "Account Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "start",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Start"
+            }
+          },
+          {
+            "in": "query",
+            "name": "end",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "End"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Admin-Token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Token"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Timeseries Analytics Timeseries Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Timeseries",
+        "tags": [
+          "analytics"
+        ]
+      }
+    },
+    "/healthz": {
+      "get": {
+        "description": "프로세스가 요청을 받을 수 있는지 반환한다.\n\nArgs:\n    services: 서비스 컨테이너.\n\nReturns:\n    상태와 버전, 환경 정보.",
+        "operationId": "healthz_healthz_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "title": "Response Healthz Healthz Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Healthz",
+        "tags": [
+          "health"
+        ]
+      }
+    },
+    "/readyz": {
+      "get": {
+        "description": "DynamoDB 와 Bedrock 접근 가능 여부까지 확인한다.\n\n한쪽이라도 실패하면 503 을 반환하되, 어느 쪽이 실패했는지 본문에\n남긴다. 실패 원인 메시지는 예외 타입만 담아 자격증명이나 내부\n호스트명이 노출되지 않게 한다.\n\nArgs:\n    services: 서비스 컨테이너.\n    response: 상태 코드를 설정할 응답 객체.\n\nReturns:\n    의존성별 확인 결과.",
+        "operationId": "readyz_readyz_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Readyz Readyz Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Readyz",
+        "tags": [
+          "health"
+        ]
+      }
+    },
+    "/v1/chat/completions": {
+      "post": {
+        "description": "채팅 완성을 수행한다.\n\nArgs:\n    payload: OpenAI 형식 요청 본문.\n    services: 서비스 컨테이너.\n    authorization: `Bearer <api-key>` 헤더.\n    x_request_id: 클라이언트가 지정한 요청 ID. 재시도 시 같은 값을\n        보내면 사용량이 중복 집계되지 않는다.\n\nReturns:\n    비스트리밍이면 OpenAI 형식 응답 딕셔너리, 스트리밍이면\n    `StreamingResponse`.\n\nRaises:\n    GatewayError: 인증·권한·예산·업스트림 오류가 발생한 경우.",
+        "operationId": "chat_completions_v1_chat_completions_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Request-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Request-Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ChatCompletionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "title": "Response Chat Completions V1 Chat Completions Post"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Chat Completions",
+        "tags": [
+          "openai-compat"
+        ]
+      }
+    },
+    "/v1/models": {
+      "get": {
+        "description": "호출 가능한 모델 목록을 OpenAI 형식으로 반환한다.\n\n키에 허용 모델 목록이 설정돼 있으면 그 목록으로 제한한다. 클라이언트가\n쓸 수 없는 모델을 보여주면 선택 후 403 을 받게 되어 혼란스럽다.\n\nArgs:\n    services: 서비스 컨테이너.\n    authorization: `Bearer <api-key>` 헤더.\n\nReturns:\n    OpenAI 형식의 모델 목록.\n\nRaises:\n    AuthenticationError: API 키가 유효하지 않은 경우.",
+        "operationId": "list_models_v1_models_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response List Models V1 Models Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Models",
+        "tags": [
+          "openai-compat"
+        ]
+      }
+    }
+  }
+}

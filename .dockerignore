@@ -1,0 +1,36 @@
+# 이미지 크기와 빌드 캐시 효율을 위해 런타임에 불필요한 것은 모두 제외한다.
+# 특히 .git 과 로컬 설정 파일은 시크릿 유출 경로가 되므로 반드시 제외한다.
+.git
+.gitignore
+.github
+
+.venv
+venv
+__pycache__
+*.py[cod]
+.mypy_cache
+.ruff_cache
+.pytest_cache
+.coverage
+coverage.xml
+htmlcov
+
+tests
+docs
+infra
+scripts
+*.md
+!README.md
+
+.env
+.env.*
+*.pem
+*.key
+credentials
+secrets.json
+
+.deploy
+*.log
+.idea
+.vscode
+.DS_Store

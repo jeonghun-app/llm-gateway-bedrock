@@ -1,0 +1,33 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+.coverage
+coverage.xml
+htmlcov/
+
+# 로컬 환경 설정과 자격증명. 절대 커밋하지 않는다.
+.env
+.env.*
+*.pem
+*.key
+credentials
+secrets.json
+.kiro
+
+# 배포 산출물과 로컬 실행 흔적
+.deploy/
+*.log
+dist/
+build/
+
+# 에디터
+.idea/
+.vscode/
+*.swp
+.DS_Store

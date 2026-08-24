@@ -1,0 +1,103 @@
+{
+  "_meta": {
+    "unit": "USD per 1,000 tokens",
+    "captured_at": "2026-08-23",
+    "source": "https://aws.amazon.com/bedrock/pricing/",
+    "note": "온디맨드 단가 스냅샷이다. Bedrock 단가는 변경되므로 운영 전에 반드시 위 페이지와 대조해 갱신한다. 여기 없는 모델은 비용 0으로 기록되고 pricing_known=false 플래그가 남는다.",
+    "region_note": "리전별 단가 차이는 반영하지 않았다. us-east-1 기준이다."
+  },
+  "models": {
+    "amazon.nova-micro-v1:0": {
+      "input_per_1k_usd": "0.000035",
+      "output_per_1k_usd": "0.00014"
+    },
+    "amazon.nova-lite-v1:0": {
+      "input_per_1k_usd": "0.00006",
+      "output_per_1k_usd": "0.00024"
+    },
+    "amazon.nova-pro-v1:0": {
+      "input_per_1k_usd": "0.0008",
+      "output_per_1k_usd": "0.0032"
+    },
+    "amazon.nova-premier-v1:0": {
+      "input_per_1k_usd": "0.0025",
+      "output_per_1k_usd": "0.0125"
+    },
+    "amazon.titan-embed-text-v2:0": {
+      "input_per_1k_usd": "0.00002",
+      "output_per_1k_usd": "0"
+    },
+    "anthropic.claude-3-haiku-20240307-v1:0": {
+      "input_per_1k_usd": "0.00025",
+      "output_per_1k_usd": "0.00125"
+    },
+    "anthropic.claude-3-5-haiku-20241022-v1:0": {
+      "input_per_1k_usd": "0.0008",
+      "output_per_1k_usd": "0.004"
+    },
+    "anthropic.claude-3-5-sonnet-20240620-v1:0": {
+      "input_per_1k_usd": "0.003",
+      "output_per_1k_usd": "0.015"
+    },
+    "anthropic.claude-3-5-sonnet-20241022-v2:0": {
+      "input_per_1k_usd": "0.003",
+      "output_per_1k_usd": "0.015"
+    },
+    "anthropic.claude-3-7-sonnet-20250219-v1:0": {
+      "input_per_1k_usd": "0.003",
+      "output_per_1k_usd": "0.015"
+    },
+    "anthropic.claude-sonnet-4-20250514-v1:0": {
+      "input_per_1k_usd": "0.003",
+      "output_per_1k_usd": "0.015"
+    },
+    "anthropic.claude-sonnet-4-5-20250929-v1:0": {
+      "input_per_1k_usd": "0.003",
+      "output_per_1k_usd": "0.015"
+    },
+    "anthropic.claude-haiku-4-5-20251001-v1:0": {
+      "input_per_1k_usd": "0.001",
+      "output_per_1k_usd": "0.005"
+    },
+    "anthropic.claude-opus-4-20250514-v1:0": {
+      "input_per_1k_usd": "0.015",
+      "output_per_1k_usd": "0.075"
+    },
+    "anthropic.claude-opus-4-5-20251101-v1:0": {
+      "input_per_1k_usd": "0.005",
+      "output_per_1k_usd": "0.025"
+    },
+    "meta.llama3-1-8b-instruct-v1:0": {
+      "input_per_1k_usd": "0.00022",
+      "output_per_1k_usd": "0.00022"
+    },
+    "meta.llama3-1-70b-instruct-v1:0": {
+      "input_per_1k_usd": "0.00072",
+      "output_per_1k_usd": "0.00072"
+    },
+    "meta.llama3-3-70b-instruct-v1:0": {
+      "input_per_1k_usd": "0.00072",
+      "output_per_1k_usd": "0.00072"
+    },
+    "deepseek.r1-v1:0": {
+      "input_per_1k_usd": "0.00135",
+      "output_per_1k_usd": "0.0054"
+    },
+    "mistral.mistral-large-2407-v1:0": {
+      "input_per_1k_usd": "0.002",
+      "output_per_1k_usd": "0.006"
+    },
+    "openai.gpt-oss-20b-1:0": {
+      "input_per_1k_usd": "0.00007",
+      "output_per_1k_usd": "0.0003"
+    },
+    "openai.gpt-oss-120b-1:0": {
+      "input_per_1k_usd": "0.00015",
+      "output_per_1k_usd": "0.0006"
+    },
+    "cohere.embed-v4:0": {
+      "input_per_1k_usd": "0.00012",
+      "output_per_1k_usd": "0"
+    }
+  }
+}

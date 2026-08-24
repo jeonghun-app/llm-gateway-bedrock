@@ -1,0 +1,13 @@
+# 개발/CI 전용 의존성. 런타임 이미지에는 포함하지 않는다.
+-r requirements.txt
+
+pytest==9.1.1
+pytest-cov==7.1.0
+pytest-asyncio==1.4.0
+httpx==0.28.1
+moto==5.2.3
+black==26.5.1
+isort==8.0.1
+ruff==0.16.4
+mypy==2.3.1
+cfn-lint==1.28.0

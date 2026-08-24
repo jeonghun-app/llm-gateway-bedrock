@@ -1,0 +1,103 @@
+[project]
+name = "llmgw"
+version = "0.1.0"
+description = "Amazon Bedrock 앞단의 OpenAI 호환 LLM Gateway"
+requires-python = ">=3.13"
+readme = "README.md"
+license = { text = "MIT" }
+
+# 런타임 의존성은 requirements.txt 로 관리한다. 컨테이너 빌드가
+# pyproject 설치 경로를 타지 않으므로 여기에 중복 선언하지 않는다.
+dependencies = []
+
+[build-system]
+requires = ["setuptools==80.9.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+# ---------------------------------------------------------------------------
+# 포맷터 / 린터 / 타입 체크
+# Google Python Style Guide 기준: 인덴트 4, 최대 줄 길이 80.
+# ---------------------------------------------------------------------------
+
+[tool.black]
+line-length = 80
+target-version = ["py313"]
+
+[tool.isort]
+profile = "google"
+line_length = 80
+src_paths = ["src", "tests", "scripts"]
+
+[tool.ruff]
+line-length = 80
+target-version = "py313"
+src = ["src", "tests", "scripts"]
+
+[tool.ruff.lint]
+select = [
+  "E",    # pycodestyle
+  "F",    # pyflakes
+  "W",    # pycodestyle warnings
+  "N",    # pep8-naming
+  "UP",   # pyupgrade
+  "B",    # flake8-bugbear
+  "C4",   # comprehensions
+  "SIM",  # simplify
+  "PTH",  # pathlib 사용 강제
+  "RET",  # return 문 정리
+  "ARG",  # 사용하지 않는 인자
+  "TRY",  # 예외 처리 관습
+  "T20",  # print 금지 (구조화 로거를 쓴다)
+]
+ignore = [
+  # TRY003: 예외 메시지를 호출 지점에 두는 편이 추적에 유리하다고 판단했다.
+  "TRY003",
+  # TRY400: 이 코드베이스는 스택트레이스가 필요한 지점에서만 exception() 을
+  # 쓰고, 예상된 실패는 error() 로 남긴다.
+  "TRY400",
+]
+
+# import 정렬은 isort(--profile google)가 단독으로 담당한다. ruff 의 I
+# 규칙을 함께 켜면 `import x` 와 `from x import y` 의 상대 순서에 대해 두
+# 도구가 서로 되돌리는 무한 루프가 생긴다.
+
+[tool.ruff.lint.per-file-ignores]
+# 테스트 이름은 검증 내용을 한국어로 읽히게 쓴다. pep8-naming(N802)은
+# 한글을 소문자로 인식하지 못해 오탐이 나므로 테스트에서만 끈다.
+# ARG 는 픽스처를 받아 쓰지 않는 경우를 허용하기 위해 끈다.
+"tests/*" = ["N802", "ARG001", "ARG002"]
+# 운영 스크립트는 사용자에게 직접 출력해야 하므로 print 를 허용한다.
+"scripts/*" = ["T20"]
+
+[tool.mypy]
+python_version = "3.13"
+mypy_path = "src"
+packages = ["llmgw"]
+strict = true
+warn_unreachable = true
+# moto / uvicorn 등 일부 서드파티는 타입 스텁이 없다.
+ignore_missing_imports = true
+# FastAPI 데코레이터는 제네릭 반환 타입을 잃어버려 오탐이 나온다.
+disallow_untyped_decorators = false
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+asyncio_mode = "auto"
+addopts = "-q --strict-markers"
+filterwarnings = ["error::DeprecationWarning:llmgw.*"]
+
+[tool.coverage.run]
+source = ["llmgw"]
+branch = true
+omit = [
+  # 프로세스 진입점은 uvicorn 이 실행하므로 유닛 테스트 대상이 아니다.
+  "src/llmgw/__main__.py",
+]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = false
