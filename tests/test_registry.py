@@ -367,10 +367,10 @@ def test_rotate_api_key_옛키가없으면롤백되어새키도안생긴다(
 def test_rotate_api_key_멱등성토큰을트랜잭션에전달한다() -> None:
     """`ClientRequestToken` 을 TransactWriteItems 로 넘기는지 확인한다.
 
-    실제 멱등성 보장은 DynamoDB 몫이고 moto 는 이를 구현하지 않는다. 그래서
-    여기서는 우리 코드가 토큰을 트랜잭션 호출에 실어 보내는지만 대역
-    클라이언트로 검증한다. 토큰이 없으면 성공 후 응답 유실 재시도가 새 해시
-    충돌로 조건 실패가 되어 사용자가 새 키를 못 받는다.
+    이 토큰은 boto3 의 SDK 내부 재시도만 보호한다(HTTP `/rotate` 재호출까지
+    멱등하게 만들지는 않는다). 실제 보호는 DynamoDB 몫이고 moto 는 이를
+    구현하지 않으므로, 여기서는 우리 코드가 토큰을 트랜잭션 호출에 실어
+    보내는지만 대역 클라이언트로 검증한다.
     """
 
     # Arrange: transact_write_items 호출 인자를 붙잡는 대역 클라이언트.

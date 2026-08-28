@@ -637,17 +637,26 @@ class RegistryRepository:
         가 실패했을 때 옛 키와 새 키가 모두 유효하고 같은 `key_id` 가 GSI 에
         중복으로 남는다. 트랜잭션은 둘 다 성공하거나 둘 다 취소되게 한다.
 
-        `client_request_token` 을 주면 `ClientRequestToken` 으로 전달해 멱등성을
-        확보한다. 트랜잭션이 성공했지만 응답만 유실되어 같은 토큰으로 재시도
-        하면, DynamoDB 가 조건 실패 대신 성공으로 처리한다(약 10분 창). 이게
-        없으면 재시도가 새 해시 충돌로 조건 실패가 되어, 사용자가 새 평문 키를
-        영영 받지 못할 수 있다. DynamoDB 규격상 1~36자만 허용되므로 그 범위를
-        벗어나면 토큰을 생략한다.
+        `client_request_token` 을 주면 `ClientRequestToken` 으로 전달한다. 이는
+        **같은 트랜잭션 호출의 SDK 내부 재시도**를 보호한다. 즉 네트워크
+        떨림으로 boto3 가 동일 요청을 자동 재시도할 때, 트랜잭션이 두 번
+        적용되지 않도록 DynamoDB 가 결과를 캐시한다(약 10분 창).
+
+        이 보호는 **HTTP `/rotate` 재호출까지 멱등하게 만들지는 않는다.** 응답이
+        유실되어 클라이언트가 `/rotate` 를 다시 부르면, 그 호출은 새 평문 키를
+        새로 만들므로 트랜잭션 내용(새 해시)이 달라진다. 같은 토큰을 재사용하면
+        내용이 달라 `IdempotentParameterMismatch` 가 날 수 있다. HTTP 수준의
+        완전한 멱등성이 필요하면 회전 결과를 작업 ID 별로 임시 저장하는 별도
+        설계가 필요하다. 그 전까지 재발급은 "다시 부르면 또 새 키가 나온다"는
+        동작으로 다룬다.
+
+        DynamoDB 규격상 토큰은 1~36자만 허용되므로 그 범위를 벗어나면 생략한다.
 
         Args:
             old_key_hash: 무효화할 옛 키의 해시.
             rotated: 새 해시·접두어를 담은 키. `key_id` 는 그대로다.
-            client_request_token: 멱등성 토큰. 보통 관리 요청의 상관 ID.
+            client_request_token: SDK 내부 재시도 보호용 토큰. 보통 관리 요청의
+                상관 ID.
 
         Raises:
             GatewayError: 트랜잭션 클라이언트가 주입되지 않은 경우.

@@ -1201,7 +1201,7 @@
     },
     "/admin/accounts/{account_id}/keys/{key_id}/rotate": {
       "post": {
-        "description": "API 키를 재발급한다.\n\n같은 `key_id` 를 유지한 채 평문 키(그리고 해시·접두어)만 새로 만든다.\n예산·허용 모델·소속·이름은 그대로 이어받는다. 옛 평문 키는 즉시\n무효가 된다. 새 해시 생성과 옛 해시 삭제는 하나의 트랜잭션으로 처리해,\n중간 실패로 두 키가 동시에 유효해지는 상황을 막는다.\n\n평문 키는 이 응답에서만 볼 수 있다.\n\nRaises:\n    ResourceNotFoundError: 계정이나 키가 없는 경우.",
+        "description": "API 키를 재발급한다.\n\n같은 `key_id` 를 유지한 채 평문 키(그리고 해시·접두어)만 새로 만든다.\n예산·허용 모델·소속·이름은 그대로 이어받는다. 옛 평문 키는 즉시\n무효가 된다. 새 해시 생성과 옛 해시 삭제는 하나의 트랜잭션으로 처리해,\n중간 실패로 두 키가 동시에 유효해지는 상황을 막는다.\n\n이 엔드포인트는 HTTP 수준에서 멱등하지 않다. 응답을 못 받아 다시 호출하면\n또 다른 새 평문 키가 발급된다. 상관 ID 를 트랜잭션 토큰으로 넘기는 것은\nboto3 의 SDK 내부 재시도만 보호한다.\n\n평문 키는 이 응답에서만 볼 수 있다.\n\nRaises:\n    ResourceNotFoundError: 계정이나 키가 없는 경우.",
         "operationId": "rotate_api_key_admin_accounts__account_id__keys__key_id__rotate_post",
         "parameters": [
           {
