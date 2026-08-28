@@ -363,6 +363,92 @@
         "title": "HTTPValidationError",
         "type": "object"
       },
+      "UpdateAccountRequest": {
+        "additionalProperties": false,
+        "description": "계정 수정 요청.\n\n부분 수정이다. 요청 본문에 실린 필드만 반영한다. `monthly_budget_usd`\n를 `null` 로 명시하면 예산을 무제한으로 되돌린다. 필드를 아예 빼면 기존\n값을 유지한다. 두 경우를 구분하기 위해 `model_fields_set` 을 본다.\n\nAttributes:\n    name: 표시 이름.\n    monthly_budget_usd: 월 예산. `null` 이면 무제한.",
+        "properties": {
+          "monthly_budget_usd": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Monthly Budget Usd"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          }
+        },
+        "title": "UpdateAccountRequest",
+        "type": "object"
+      },
+      "UpdateApiKeyRequest": {
+        "additionalProperties": false,
+        "description": "API 키 수정 요청. 규칙은 `UpdateAccountRequest` 와 같다.\n\n키의 소속(계정·팀·사용자)과 해시는 바꿀 수 없다. 소속을 옮기려면 새\n키를 발급한다.\n\nAttributes:\n    name: 키 용도 메모.\n    allowed_models: 허용 모델 목록. 빈 목록이면 서버 기본 정책을 따른다.\n    monthly_budget_usd: 키 월 예산. `null` 이면 상위 예산만 적용.",
+        "properties": {
+          "allowed_models": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Allowed Models"
+          },
+          "monthly_budget_usd": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Monthly Budget Usd"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          }
+        },
+        "title": "UpdateApiKeyRequest",
+        "type": "object"
+      },
       "UpdateStatusRequest": {
         "additionalProperties": false,
         "description": "활성 상태 변경 요청.\n\nAttributes:\n    status: `active` 또는 `disabled`.",
@@ -380,6 +466,102 @@
           "status"
         ],
         "title": "UpdateStatusRequest",
+        "type": "object"
+      },
+      "UpdateTeamRequest": {
+        "additionalProperties": false,
+        "description": "팀 수정 요청. 규칙은 `UpdateAccountRequest` 와 같다.\n\nAttributes:\n    name: 표시 이름.\n    monthly_budget_usd: 월 예산. `null` 이면 상위 예산만 적용.",
+        "properties": {
+          "monthly_budget_usd": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Monthly Budget Usd"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          }
+        },
+        "title": "UpdateTeamRequest",
+        "type": "object"
+      },
+      "UpdateUserRequest": {
+        "additionalProperties": false,
+        "description": "사용자 수정 요청. 규칙은 `UpdateAccountRequest` 와 같다.\n\nAttributes:\n    name: 표시 이름.\n    email: 연락용 메일.\n    team_id: 소속 팀 ID. 빈 문자열이면 팀 없음으로 만든다.\n    monthly_budget_usd: 월 예산. `null` 이면 상위 예산만 적용.",
+        "properties": {
+          "email": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Email"
+          },
+          "monthly_budget_usd": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Monthly Budget Usd"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "team_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Team Id"
+          }
+        },
+        "title": "UpdateUserRequest",
         "type": "object"
       },
       "ValidationError": {
@@ -544,6 +726,56 @@
       }
     },
     "/admin/accounts/{account_id}": {
+      "delete": {
+        "description": "계정을 삭제한다.\n\n하위 팀·사용자·키가 남아 있으면 409 로 거부한다.\n\nArgs:\n    account_id: 계정 ID.\n    services: 인증된 서비스 컨테이너.\n\nReturns:\n    본문 없는 204 응답.\n\nRaises:\n    ResourceNotFoundError: 계정이 없는 경우.\n    ResourceConflictError: 하위 리소스가 남아 있는 경우.",
+        "operationId": "delete_account_admin_accounts__account_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "account_id",
+            "required": true,
+            "schema": {
+              "title": "Account Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Admin-Token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Token"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete Account",
+        "tags": [
+          "admin"
+        ]
+      },
       "get": {
         "description": "계정 하나를 반환한다.\n\nArgs:\n    account_id: 계정 ID.\n    services: 인증된 서비스 컨테이너.\n\nReturns:\n    계정 정보.\n\nRaises:\n    ResourceNotFoundError: 계정이 없는 경우.",
         "operationId": "get_account_admin_accounts__account_id__get",
@@ -599,6 +831,75 @@
           }
         },
         "summary": "Get Account",
+        "tags": [
+          "admin"
+        ]
+      },
+      "patch": {
+        "description": "계정의 이름·예산을 수정한다.\n\n요청 본문에 실린 필드만 반영한다. `monthly_budget_usd` 를 `null` 로\n보내면 예산이 무제한으로 바뀐다.\n\nArgs:\n    account_id: 계정 ID.\n    payload: 수정 요청.\n    services: 인증된 서비스 컨테이너.\n\nReturns:\n    수정된 계정.\n\nRaises:\n    ResourceNotFoundError: 계정이 없는 경우.",
+        "operationId": "update_account_admin_accounts__account_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "account_id",
+            "required": true,
+            "schema": {
+              "title": "Account Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Admin-Token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Token"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateAccountRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Update Account Admin Accounts  Account Id  Patch",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Update Account",
         "tags": [
           "admin"
         ]
@@ -790,6 +1091,302 @@
           }
         },
         "summary": "Delete Api Key",
+        "tags": [
+          "admin"
+        ]
+      },
+      "get": {
+        "description": "API 키 하나의 메타데이터를 반환한다. 평문 키는 포함되지 않는다.\n\nRaises:\n    ResourceNotFoundError: 계정이나 키가 없는 경우.",
+        "operationId": "get_api_key_admin_accounts__account_id__keys__key_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "account_id",
+            "required": true,
+            "schema": {
+              "title": "Account Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "key_id",
+            "required": true,
+            "schema": {
+              "title": "Key Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Admin-Token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Token"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Get Api Key Admin Accounts  Account Id  Keys  Key Id  Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Api Key",
+        "tags": [
+          "admin"
+        ]
+      },
+      "patch": {
+        "description": "API 키의 이름·허용 모델·예산을 수정한다.\n\n소속(계정·팀·사용자)과 해시는 바꾸지 않는다.\n\nRaises:\n    ResourceNotFoundError: 계정이나 키가 없는 경우.",
+        "operationId": "update_api_key_admin_accounts__account_id__keys__key_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "account_id",
+            "required": true,
+            "schema": {
+              "title": "Account Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "key_id",
+            "required": true,
+            "schema": {
+              "title": "Key Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Admin-Token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Token"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateApiKeyRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Update Api Key Admin Accounts  Account Id  Keys  Key Id  Patch",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Update Api Key",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/admin/accounts/{account_id}/keys/{key_id}/rotate": {
+      "post": {
+        "description": "API 키를 재발급한다.\n\n같은 `key_id` 를 유지한 채 평문 키(그리고 해시·접두어)만 새로 만든다.\n예산·허용 모델·소속·이름은 그대로 이어받는다. 옛 평문 키는 즉시\n무효가 된다. 키 아이템의 파티션 키가 해시라서, 옛 해시 아이템을 지우고\n새 해시로 다시 쓴다.\n\n평문 키는 이 응답에서만 볼 수 있다.\n\nRaises:\n    ResourceNotFoundError: 계정이나 키가 없는 경우.",
+        "operationId": "rotate_api_key_admin_accounts__account_id__keys__key_id__rotate_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "account_id",
+            "required": true,
+            "schema": {
+              "title": "Account Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "key_id",
+            "required": true,
+            "schema": {
+              "title": "Key Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Admin-Token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Token"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Rotate Api Key Admin Accounts  Account Id  Keys  Key Id  Rotate Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Rotate Api Key",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/admin/accounts/{account_id}/keys/{key_id}/status": {
+      "post": {
+        "description": "API 키를 활성/비활성 전환한다.\n\n비활성 키는 인증에서 즉시 거부된다. 삭제와 달리 되살릴 수 있어, 잠시\n막고 싶을 때 쓴다.\n\nRaises:\n    ResourceNotFoundError: 계정이나 키가 없는 경우.",
+        "operationId": "update_api_key_status_admin_accounts__account_id__keys__key_id__status_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "account_id",
+            "required": true,
+            "schema": {
+              "title": "Account Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "key_id",
+            "required": true,
+            "schema": {
+              "title": "Key Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Admin-Token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Token"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateStatusRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Update Api Key Status Admin Accounts  Account Id  Keys  Key Id  Status Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Update Api Key Status",
         "tags": [
           "admin"
         ]
@@ -996,6 +1593,293 @@
         ]
       }
     },
+    "/admin/accounts/{account_id}/teams/{team_id}": {
+      "delete": {
+        "description": "팀을 삭제한다.\n\n소속 사용자·키가 남아 있으면 409 로 거부한다.\n\nRaises:\n    ResourceNotFoundError: 계정이나 팀이 없는 경우.\n    ResourceConflictError: 소속 사용자·키가 남아 있는 경우.",
+        "operationId": "delete_team_admin_accounts__account_id__teams__team_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "account_id",
+            "required": true,
+            "schema": {
+              "title": "Account Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "team_id",
+            "required": true,
+            "schema": {
+              "title": "Team Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Admin-Token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Token"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete Team",
+        "tags": [
+          "admin"
+        ]
+      },
+      "get": {
+        "description": "팀 하나를 반환한다.\n\nRaises:\n    ResourceNotFoundError: 계정이나 팀이 없는 경우.",
+        "operationId": "get_team_admin_accounts__account_id__teams__team_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "account_id",
+            "required": true,
+            "schema": {
+              "title": "Account Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "team_id",
+            "required": true,
+            "schema": {
+              "title": "Team Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Admin-Token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Token"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Get Team Admin Accounts  Account Id  Teams  Team Id  Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Team",
+        "tags": [
+          "admin"
+        ]
+      },
+      "patch": {
+        "description": "팀의 이름·예산을 수정한다.\n\nRaises:\n    ResourceNotFoundError: 계정이나 팀이 없는 경우.",
+        "operationId": "update_team_admin_accounts__account_id__teams__team_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "account_id",
+            "required": true,
+            "schema": {
+              "title": "Account Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "team_id",
+            "required": true,
+            "schema": {
+              "title": "Team Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Admin-Token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Token"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateTeamRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Update Team Admin Accounts  Account Id  Teams  Team Id  Patch",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Update Team",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/admin/accounts/{account_id}/teams/{team_id}/status": {
+      "post": {
+        "description": "팀을 활성/비활성 전환한다.\n\n비활성 팀에 속한 키는 인증에서 거부된다. 반영은 메타데이터 캐시\nTTL 만큼 지연될 수 있다.\n\nRaises:\n    ResourceNotFoundError: 계정이나 팀이 없는 경우.",
+        "operationId": "update_team_status_admin_accounts__account_id__teams__team_id__status_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "account_id",
+            "required": true,
+            "schema": {
+              "title": "Account Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "team_id",
+            "required": true,
+            "schema": {
+              "title": "Team Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Admin-Token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Token"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateStatusRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Update Team Status Admin Accounts  Account Id  Teams  Team Id  Status Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Update Team Status",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
     "/admin/accounts/{account_id}/users": {
       "get": {
         "description": "계정의 사용자 목록을 반환한다.\n\nArgs:\n    account_id: 계정 ID.\n    services: 인증된 서비스 컨테이너.\n\nReturns:\n    사용자 목록.",
@@ -1121,6 +2005,293 @@
           }
         },
         "summary": "Create User",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/admin/accounts/{account_id}/users/{user_id}": {
+      "delete": {
+        "description": "사용자를 삭제한다.\n\n소유 키가 남아 있으면 409 로 거부한다.\n\nRaises:\n    ResourceNotFoundError: 계정이나 사용자가 없는 경우.\n    ResourceConflictError: 소유 키가 남아 있는 경우.",
+        "operationId": "delete_user_admin_accounts__account_id__users__user_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "account_id",
+            "required": true,
+            "schema": {
+              "title": "Account Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "user_id",
+            "required": true,
+            "schema": {
+              "title": "User Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Admin-Token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Token"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete User",
+        "tags": [
+          "admin"
+        ]
+      },
+      "get": {
+        "description": "사용자 하나를 반환한다.\n\nRaises:\n    ResourceNotFoundError: 계정이나 사용자가 없는 경우.",
+        "operationId": "get_user_admin_accounts__account_id__users__user_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "account_id",
+            "required": true,
+            "schema": {
+              "title": "Account Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "user_id",
+            "required": true,
+            "schema": {
+              "title": "User Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Admin-Token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Token"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Get User Admin Accounts  Account Id  Users  User Id  Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get User",
+        "tags": [
+          "admin"
+        ]
+      },
+      "patch": {
+        "description": "사용자의 이름·메일·팀·예산을 수정한다.\n\n팀을 옮길 때 그 팀이 존재하는지 확인한다. 다만 이 사용자에게 이미\n발급된 키의 `team_id` 는 여기서 함께 바꾸지 않는다. 키의 소속을 옮기려면\n키를 새로 발급해야 한다. 사용자 축과 키 축 집계가 어긋나는 것을 막기\n위해서다.\n\nRaises:\n    ResourceNotFoundError: 계정·사용자·지정한 팀이 없는 경우.",
+        "operationId": "update_user_admin_accounts__account_id__users__user_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "account_id",
+            "required": true,
+            "schema": {
+              "title": "Account Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "user_id",
+            "required": true,
+            "schema": {
+              "title": "User Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Admin-Token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Token"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateUserRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Update User Admin Accounts  Account Id  Users  User Id  Patch",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Update User",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/admin/accounts/{account_id}/users/{user_id}/status": {
+      "post": {
+        "description": "사용자를 활성/비활성 전환한다.\n\n비활성 사용자의 키는 인증에서 거부된다. 반영은 메타데이터 캐시\nTTL 만큼 지연될 수 있다.\n\nRaises:\n    ResourceNotFoundError: 계정이나 사용자가 없는 경우.",
+        "operationId": "update_user_status_admin_accounts__account_id__users__user_id__status_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "account_id",
+            "required": true,
+            "schema": {
+              "title": "Account Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "user_id",
+            "required": true,
+            "schema": {
+              "title": "User Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Admin-Token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Token"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateStatusRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Update User Status Admin Accounts  Account Id  Users  User Id  Status Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Update User Status",
         "tags": [
           "admin"
         ]

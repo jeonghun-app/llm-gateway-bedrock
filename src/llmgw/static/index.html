@@ -58,7 +58,15 @@
 
 <p id="status-line" class="status" role="status" aria-live="polite"></p>
 
+<nav class="view-switch" aria-label="화면 전환">
+  <button type="button" id="view-monitor" class="view-tab" aria-pressed="true"
+          data-screen="monitor">모니터링</button>
+  <button type="button" id="view-manage" class="view-tab" aria-pressed="false"
+          data-screen="manage">관리</button>
+</nav>
+
 <main id="main">
+  <div id="screen-monitor">
   <section aria-labelledby="kpi-heading">
     <h2 id="kpi-heading" class="section-heading">요약</h2>
     <div class="kpi-grid">
@@ -143,6 +151,29 @@
       </table>
     </div>
   </section>
+  </div><!-- /#screen-monitor -->
+
+  <div id="screen-manage" hidden>
+    <section aria-labelledby="manage-heading">
+      <h2 id="manage-heading" class="section-heading">리소스 관리</h2>
+      <p class="manage-hint">
+        선택한 계정 아래의 팀·사용자·키를 만들고 수정·삭제한다. 삭제는 하위
+        리소스가 없어야 하고, 키 재발급 시 옛 키는 즉시 무효가 된다.
+      </p>
+      <div class="tabs" role="tablist" aria-label="관리 대상 전환">
+        <button type="button" role="tab" id="mtab-accounts"
+                aria-selected="true" data-manage="accounts">계정</button>
+        <button type="button" role="tab" id="mtab-teams"
+                aria-selected="false" data-manage="teams">팀</button>
+        <button type="button" role="tab" id="mtab-users"
+                aria-selected="false" data-manage="users">사용자</button>
+        <button type="button" role="tab" id="mtab-keys"
+                aria-selected="false" data-manage="keys">API 키</button>
+      </div>
+      <div id="manage-panel" role="tabpanel" tabindex="0"
+           class="manage-panel"></div>
+    </section>
+  </div><!-- /#screen-manage -->
 </main>
 
 <footer class="footer">
@@ -153,7 +184,10 @@
   </p>
 </footer>
 
+<div id="modal-root" class="modal-root" hidden></div>
+
 <script src="charts.js"></script>
 <script src="app.js"></script>
+<script src="admin.js"></script>
 </body>
 </html>

@@ -13,6 +13,7 @@ import http
 import typing
 
 import fastapi
+import pydantic
 
 from llmgw import apikey
 from llmgw import clock
@@ -108,6 +109,50 @@ def _require_account(
     if account is None:
         raise errors.ResourceNotFoundError(f"계정을 찾을 수 없다: {account_id}")
     return account
+
+
+def _require_team(
+    services: services_module.Services, account_id: str, team_id: str
+) -> domain.Team:
+    """팀을 조회하고 없으면 404 를 낸다."""
+    team = services.registry.get_team(account_id, team_id)
+    if team is None:
+        raise errors.ResourceNotFoundError(f"팀을 찾을 수 없다: {team_id}")
+    return team
+
+
+def _require_user(
+    services: services_module.Services, account_id: str, user_id: str
+) -> domain.User:
+    """사용자를 조회하고 없으면 404 를 낸다."""
+    user = services.registry.get_user(account_id, user_id)
+    if user is None:
+        raise errors.ResourceNotFoundError(f"사용자를 찾을 수 없다: {user_id}")
+    return user
+
+
+def _apply_updates(
+    payload: pydantic.BaseModel, field_map: dict[str, str]
+) -> _JsonDict:
+    """부분 수정 요청에서 실제로 실린 필드만 골라 변경 딕셔너리를 만든다.
+
+    Pydantic 의 `model_fields_set` 을 보고, 요청 본문에 명시된 필드만
+    반영한다. 이렇게 하면 "필드 미지정(기존 값 유지)" 과 "null 로 명시
+    (값 초기화)" 를 구분할 수 있다.
+
+    Args:
+        payload: `model_fields_set` 을 가진 Pydantic 모델.
+        field_map: {요청 필드명: 도메인 필드명} 매핑.
+
+    Returns:
+        `model_copy(update=...)` 에 넘길 변경 딕셔너리.
+    """
+    fields_set = payload.model_fields_set
+    changes: _JsonDict = {}
+    for request_field, domain_field in field_map.items():
+        if request_field in fields_set:
+            changes[domain_field] = getattr(payload, request_field)
+    return changes
 
 
 # -- 계정 -------------------------------------------------------------------
@@ -210,6 +255,63 @@ def update_account_status(
     return _account_payload(updated)
 
 
+@router.patch("/accounts/{account_id}")
+def update_account(
+    account_id: str,
+    payload: schemas.UpdateAccountRequest,
+    services: services_module.AdminDep,
+) -> _JsonDict:
+    """계정의 이름·예산을 수정한다.
+
+    요청 본문에 실린 필드만 반영한다. `monthly_budget_usd` 를 `null` 로
+    보내면 예산이 무제한으로 바뀐다.
+
+    Args:
+        account_id: 계정 ID.
+        payload: 수정 요청.
+        services: 인증된 서비스 컨테이너.
+
+    Returns:
+        수정된 계정.
+
+    Raises:
+        ResourceNotFoundError: 계정이 없는 경우.
+    """
+    account = _require_account(services, account_id)
+    changes = _apply_updates(
+        payload,
+        {"name": "name", "monthly_budget_usd": "monthly_budget_usd"},
+    )
+    updated = account.model_copy(update=changes)
+    services.registry.put_account(updated, overwrite=True)
+    services.logger.info("계정을 수정했다", extra={"account_id": account_id})
+    return _account_payload(updated)
+
+
+@router.delete("/accounts/{account_id}", status_code=http.HTTPStatus.NO_CONTENT)
+def delete_account(
+    account_id: str, services: services_module.AdminDep
+) -> fastapi.Response:
+    """계정을 삭제한다.
+
+    하위 팀·사용자·키가 남아 있으면 409 로 거부한다.
+
+    Args:
+        account_id: 계정 ID.
+        services: 인증된 서비스 컨테이너.
+
+    Returns:
+        본문 없는 204 응답.
+
+    Raises:
+        ResourceNotFoundError: 계정이 없는 경우.
+        ResourceConflictError: 하위 리소스가 남아 있는 경우.
+    """
+    services.registry.delete_account(account_id)
+    services.logger.info("계정을 삭제했다", extra={"account_id": account_id})
+    return fastapi.Response(status_code=http.HTTPStatus.NO_CONTENT)
+
+
 # -- 팀 ---------------------------------------------------------------------
 
 
@@ -262,6 +364,100 @@ def list_teams(
     """
     teams = services.registry.list_teams(account_id)
     return {"data": [_team_payload(item) for item in teams]}
+
+
+@router.get("/accounts/{account_id}/teams/{team_id}")
+def get_team(
+    account_id: str, team_id: str, services: services_module.AdminDep
+) -> _JsonDict:
+    """팀 하나를 반환한다.
+
+    Raises:
+        ResourceNotFoundError: 계정이나 팀이 없는 경우.
+    """
+    _require_account(services, account_id)
+    return _team_payload(_require_team(services, account_id, team_id))
+
+
+@router.patch("/accounts/{account_id}/teams/{team_id}")
+def update_team(
+    account_id: str,
+    team_id: str,
+    payload: schemas.UpdateTeamRequest,
+    services: services_module.AdminDep,
+) -> _JsonDict:
+    """팀의 이름·예산을 수정한다.
+
+    Raises:
+        ResourceNotFoundError: 계정이나 팀이 없는 경우.
+    """
+    _require_account(services, account_id)
+    team = _require_team(services, account_id, team_id)
+    changes = _apply_updates(
+        payload,
+        {"name": "name", "monthly_budget_usd": "monthly_budget_usd"},
+    )
+    updated = team.model_copy(update=changes)
+    services.registry.put_team(updated, overwrite=True)
+    services.logger.info(
+        "팀을 수정했다", extra={"account_id": account_id, "team_id": team_id}
+    )
+    return _team_payload(updated)
+
+
+@router.post("/accounts/{account_id}/teams/{team_id}/status")
+def update_team_status(
+    account_id: str,
+    team_id: str,
+    payload: schemas.UpdateStatusRequest,
+    services: services_module.AdminDep,
+) -> _JsonDict:
+    """팀을 활성/비활성 전환한다.
+
+    비활성 팀에 속한 키는 인증에서 거부된다. 반영은 메타데이터 캐시
+    TTL 만큼 지연될 수 있다.
+
+    Raises:
+        ResourceNotFoundError: 계정이나 팀이 없는 경우.
+    """
+    _require_account(services, account_id)
+    team = _require_team(services, account_id, team_id)
+    updated = team.model_copy(
+        update={"status": domain.EntityStatus(payload.status)}
+    )
+    services.registry.put_team(updated, overwrite=True)
+    services.logger.info(
+        "팀 상태를 변경했다",
+        extra={
+            "account_id": account_id,
+            "team_id": team_id,
+            "status": payload.status,
+        },
+    )
+    return _team_payload(updated)
+
+
+@router.delete(
+    "/accounts/{account_id}/teams/{team_id}",
+    status_code=http.HTTPStatus.NO_CONTENT,
+)
+def delete_team(
+    account_id: str, team_id: str, services: services_module.AdminDep
+) -> fastapi.Response:
+    """팀을 삭제한다.
+
+    소속 사용자·키가 남아 있으면 409 로 거부한다.
+
+    Raises:
+        ResourceNotFoundError: 계정이나 팀이 없는 경우.
+        ResourceConflictError: 소속 사용자·키가 남아 있는 경우.
+    """
+    _require_account(services, account_id)
+    services.registry.delete_team(account_id, team_id)
+    services.logger.info(
+        "팀을 삭제했다", extra={"account_id": account_id, "team_id": team_id}
+    )
+    return fastapi.Response(status_code=http.HTTPStatus.NO_CONTENT)
 
 
 # -- 사용자 -----------------------------------------------------------------
@@ -324,6 +520,114 @@ def list_users(
     """
     users = services.registry.list_users(account_id)
     return {"data": [_user_payload(item) for item in users]}
+
+
+@router.get("/accounts/{account_id}/users/{user_id}")
+def get_user(
+    account_id: str, user_id: str, services: services_module.AdminDep
+) -> _JsonDict:
+    """사용자 하나를 반환한다.
+
+    Raises:
+        ResourceNotFoundError: 계정이나 사용자가 없는 경우.
+    """
+    _require_account(services, account_id)
+    return _user_payload(_require_user(services, account_id, user_id))
+
+
+@router.patch("/accounts/{account_id}/users/{user_id}")
+def update_user(
+    account_id: str,
+    user_id: str,
+    payload: schemas.UpdateUserRequest,
+    services: services_module.AdminDep,
+) -> _JsonDict:
+    """사용자의 이름·메일·팀·예산을 수정한다.
+
+    팀을 옮길 때 그 팀이 존재하는지 확인한다. 다만 이 사용자에게 이미
+    발급된 키의 `team_id` 는 여기서 함께 바꾸지 않는다. 키의 소속을 옮기려면
+    키를 새로 발급해야 한다. 사용자 축과 키 축 집계가 어긋나는 것을 막기
+    위해서다.
+
+    Raises:
+        ResourceNotFoundError: 계정·사용자·지정한 팀이 없는 경우.
+    """
+    _require_account(services, account_id)
+    user = _require_user(services, account_id, user_id)
+    if "team_id" in payload.model_fields_set and payload.team_id:
+        _require_team(services, account_id, payload.team_id)
+    changes = _apply_updates(
+        payload,
+        {
+            "name": "name",
+            "email": "email",
+            "team_id": "team_id",
+            "monthly_budget_usd": "monthly_budget_usd",
+        },
+    )
+    updated = user.model_copy(update=changes)
+    services.registry.put_user(updated, overwrite=True)
+    services.logger.info(
+        "사용자를 수정했다",
+        extra={"account_id": account_id, "user_id": user_id},
+    )
+    return _user_payload(updated)
+
+
+@router.post("/accounts/{account_id}/users/{user_id}/status")
+def update_user_status(
+    account_id: str,
+    user_id: str,
+    payload: schemas.UpdateStatusRequest,
+    services: services_module.AdminDep,
+) -> _JsonDict:
+    """사용자를 활성/비활성 전환한다.
+
+    비활성 사용자의 키는 인증에서 거부된다. 반영은 메타데이터 캐시
+    TTL 만큼 지연될 수 있다.
+
+    Raises:
+        ResourceNotFoundError: 계정이나 사용자가 없는 경우.
+    """
+    _require_account(services, account_id)
+    user = _require_user(services, account_id, user_id)
+    updated = user.model_copy(
+        update={"status": domain.EntityStatus(payload.status)}
+    )
+    services.registry.put_user(updated, overwrite=True)
+    services.logger.info(
+        "사용자 상태를 변경했다",
+        extra={
+            "account_id": account_id,
+            "user_id": user_id,
+            "status": payload.status,
+        },
+    )
+    return _user_payload(updated)
+
+
+@router.delete(
+    "/accounts/{account_id}/users/{user_id}",
+    status_code=http.HTTPStatus.NO_CONTENT,
+)
+def delete_user(
+    account_id: str, user_id: str, services: services_module.AdminDep
+) -> fastapi.Response:
+    """사용자를 삭제한다.
+
+    소유 키가 남아 있으면 409 로 거부한다.
+
+    Raises:
+        ResourceNotFoundError: 계정이나 사용자가 없는 경우.
+        ResourceConflictError: 소유 키가 남아 있는 경우.
+    """
+    _require_account(services, account_id)
+    services.registry.delete_user(account_id, user_id)
+    services.logger.info(
+        "사용자를 삭제했다",
+        extra={"account_id": account_id, "user_id": user_id},
+    )
+    return fastapi.Response(status_code=http.HTTPStatus.NO_CONTENT)
 
 
 # -- API 키 -----------------------------------------------------------------
@@ -431,6 +735,137 @@ def delete_api_key(
         extra={"account_id": account_id, "key_id": key_id},
     )
     return fastapi.Response(status_code=http.HTTPStatus.NO_CONTENT)
+
+
+def _require_api_key(
+    services: services_module.Services, account_id: str, key_id: str
+) -> domain.ApiKey:
+    """키를 조회하고 없으면 404 를 낸다."""
+    api_key = services.registry.get_api_key(account_id, key_id)
+    if api_key is None:
+        raise errors.ResourceNotFoundError(f"API 키를 찾을 수 없다: {key_id}")
+    return api_key
+
+
+@router.get("/accounts/{account_id}/keys/{key_id}")
+def get_api_key(
+    account_id: str, key_id: str, services: services_module.AdminDep
+) -> _JsonDict:
+    """API 키 하나의 메타데이터를 반환한다. 평문 키는 포함되지 않는다.
+
+    Raises:
+        ResourceNotFoundError: 계정이나 키가 없는 경우.
+    """
+    _require_account(services, account_id)
+    return _key_payload(_require_api_key(services, account_id, key_id))
+
+
+@router.patch("/accounts/{account_id}/keys/{key_id}")
+def update_api_key(
+    account_id: str,
+    key_id: str,
+    payload: schemas.UpdateApiKeyRequest,
+    services: services_module.AdminDep,
+) -> _JsonDict:
+    """API 키의 이름·허용 모델·예산을 수정한다.
+
+    소속(계정·팀·사용자)과 해시는 바꾸지 않는다.
+
+    Raises:
+        ResourceNotFoundError: 계정이나 키가 없는 경우.
+    """
+    _require_account(services, account_id)
+    api_key = _require_api_key(services, account_id, key_id)
+    changes = _apply_updates(
+        payload,
+        {"name": "name", "monthly_budget_usd": "monthly_budget_usd"},
+    )
+    if "allowed_models" in payload.model_fields_set:
+        changes["allowed_models"] = tuple(payload.allowed_models or [])
+    updated = api_key.model_copy(update=changes)
+    services.registry.update_api_key(updated)
+    services.logger.info(
+        "API 키를 수정했다",
+        extra={"account_id": account_id, "key_id": key_id},
+    )
+    return _key_payload(updated)
+
+
+@router.post("/accounts/{account_id}/keys/{key_id}/status")
+def update_api_key_status(
+    account_id: str,
+    key_id: str,
+    payload: schemas.UpdateStatusRequest,
+    services: services_module.AdminDep,
+) -> _JsonDict:
+    """API 키를 활성/비활성 전환한다.
+
+    비활성 키는 인증에서 즉시 거부된다. 삭제와 달리 되살릴 수 있어, 잠시
+    막고 싶을 때 쓴다.
+
+    Raises:
+        ResourceNotFoundError: 계정이나 키가 없는 경우.
+    """
+    _require_account(services, account_id)
+    api_key = _require_api_key(services, account_id, key_id)
+    updated = api_key.model_copy(
+        update={"status": domain.EntityStatus(payload.status)}
+    )
+    services.registry.update_api_key(updated)
+    services.logger.info(
+        "API 키 상태를 변경했다",
+        extra={
+            "account_id": account_id,
+            "key_id": key_id,
+            "status": payload.status,
+        },
+    )
+    return _key_payload(updated)
+
+
+@router.post("/accounts/{account_id}/keys/{key_id}/rotate")
+def rotate_api_key(
+    account_id: str, key_id: str, services: services_module.AdminDep
+) -> _JsonDict:
+    """API 키를 재발급한다.
+
+    같은 `key_id` 를 유지한 채 평문 키(그리고 해시·접두어)만 새로 만든다.
+    예산·허용 모델·소속·이름은 그대로 이어받는다. 옛 평문 키는 즉시
+    무효가 된다. 키 아이템의 파티션 키가 해시라서, 옛 해시 아이템을 지우고
+    새 해시로 다시 쓴다.
+
+    평문 키는 이 응답에서만 볼 수 있다.
+
+    Raises:
+        ResourceNotFoundError: 계정이나 키가 없는 경우.
+    """
+    _require_account(services, account_id)
+    existing = _require_api_key(services, account_id, key_id)
+
+    generated = apikey.generate_api_key(services.settings.env)
+    rotated = existing.model_copy(
+        update={
+            "key_hash": generated.key_hash,
+            "key_prefix": generated.key_prefix,
+            "last_used_at": "",
+        }
+    )
+    # 새 해시로 먼저 쓰고, 성공하면 옛 해시 아이템을 지운다. 순서를
+    # 뒤집으면 중간에 실패했을 때 키가 사라진다. 옛 아이템과 새 아이템은
+    # 같은 key_id 를 가지므로 GSI(key_id) 로 지우면 안 되고, 옛 해시를
+    # 파티션 키로 직접 지운다.
+    services.registry.put_api_key(rotated)
+    services.registry.delete_api_key_by_hash(existing.key_hash)
+    services.logger.info(
+        "API 키를 재발급했다",
+        extra={"account_id": account_id, "key_id": key_id},
+    )
+    payload_out = _key_payload(rotated)
+    payload_out["api_key"] = generated.plaintext
+    payload_out["warning"] = (
+        "평문 키는 이 응답에서만 확인할 수 있다. 옛 키는 즉시 무효다."
+    )
+    return payload_out
 
 
 # -- 모델 -------------------------------------------------------------------

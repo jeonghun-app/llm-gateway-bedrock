@@ -523,6 +523,70 @@ class RegistryRepository:
         )
         return [self._to_api_key(item) for item in items]
 
+    def get_api_key(self, account_id: str, key_id: str) -> domain.ApiKey | None:
+        """계정 범위에서 키 ID 로 키 메타데이터를 조회한다.
+
+        키의 파티션 키는 해시라서 GSI 를 거쳐 찾는다. 관리 화면의 조회·수정
+        경로에서 쓰고, 인증 경로에서는 쓰지 않는다.
+
+        Args:
+            account_id: 계정 ID.
+            key_id: 키 ID.
+
+        Returns:
+            찾은 키. 없으면 `None`.
+        """
+        items = self._query_index(
+            key_condition="gsi1pk = :pk AND gsi1sk = :sk",
+            values={":pk": account_pk(account_id), ":sk": f"KEY#{key_id}"},
+        )
+        return None if not items else self._to_api_key(items[0])
+
+    def update_api_key(self, api_key: domain.ApiKey) -> None:
+        """기존 API 키 메타데이터를 덮어쓴다.
+
+        해시가 파티션 키이므로 해시가 그대로인 수정에만 쓴다. 존재할 때만
+        갱신해 삭제된 키가 되살아나지 않게 한다.
+
+        Args:
+            api_key: 갱신할 키. 해시는 기존과 같아야 한다.
+
+        Raises:
+            ResourceNotFoundError: 해당 해시의 키가 없는 경우.
+        """
+        item = _strip_none(
+            {
+                "pk": key_pk(api_key.key_hash),
+                "sk": _META_SORT_KEY,
+                "gsi1pk": account_pk(api_key.account_id),
+                "gsi1sk": f"KEY#{api_key.key_id}",
+                "entity": "api_key",
+                "key_id": api_key.key_id,
+                "key_hash": api_key.key_hash,
+                "key_prefix": api_key.key_prefix,
+                "account_id": api_key.account_id,
+                "team_id": api_key.team_id,
+                "user_id": api_key.user_id,
+                "display_name": api_key.name,
+                "allowed_models": list(api_key.allowed_models),
+                "monthly_budget_usd": api_key.monthly_budget_usd,
+                "status": api_key.status.value,
+                "created_at": api_key.created_at,
+                "last_used_at": api_key.last_used_at,
+            }
+        )
+        try:
+            self._table.put_item(
+                Item=item, ConditionExpression="attribute_exists(pk)"
+            )
+        except botocore.exceptions.ClientError as exc:
+            code = exc.response.get("Error", {}).get("Code")
+            if code == "ConditionalCheckFailedException":
+                raise errors.ResourceNotFoundError(
+                    f"API 키를 찾을 수 없다: {api_key.key_id}"
+                ) from exc
+            raise
+
     def delete_api_key(self, account_id: str, key_id: str) -> None:
         """API 키를 삭제한다.
 
@@ -549,6 +613,116 @@ class RegistryRepository:
             )
         self._table.delete_item(
             Key={"pk": items[0]["pk"], "sk": _META_SORT_KEY}
+        )
+
+    def delete_api_key_by_hash(self, key_hash: str) -> None:
+        """해시로 API 키를 직접 삭제한다.
+
+        재발급 시 옛 해시 아이템만 지우는 데 쓴다. 옛 아이템과 새 아이템이
+        같은 `key_id` 를 가져 GSI 로는 구분되지 않기 때문이다. 존재하지 않아도
+        오류를 내지 않는다(멱등).
+
+        Args:
+            key_hash: 삭제할 키의 해시.
+        """
+        self._table.delete_item(
+            Key={"pk": key_pk(key_hash), "sk": _META_SORT_KEY}
+        )
+
+    # -- 삭제 (참조 무결성) --------------------------------------------------
+
+    def delete_account(self, account_id: str) -> None:
+        """계정을 삭제한다.
+
+        하위에 팀·사용자·키가 하나라도 남아 있으면 삭제하지 않는다. 고아
+        레코드가 생기면 사용량 집계의 이름 조인이 깨지고, 같은 ID 를 재생성했을
+        때 옛 하위 리소스가 되살아나기 때문이다.
+
+        Args:
+            account_id: 삭제할 계정 ID.
+
+        Raises:
+            ResourceNotFoundError: 계정이 없는 경우.
+            ResourceConflictError: 하위 팀·사용자·키가 남아 있는 경우.
+        """
+        if self.get_account(account_id) is None:
+            raise errors.ResourceNotFoundError(
+                f"계정을 찾을 수 없다: {account_id}"
+            )
+        if self.list_teams(account_id):
+            raise errors.ResourceConflictError(
+                f"팀이 남아 있어 계정을 삭제할 수 없다: {account_id}"
+            )
+        if self.list_users(account_id):
+            raise errors.ResourceConflictError(
+                f"사용자가 남아 있어 계정을 삭제할 수 없다: {account_id}"
+            )
+        if self.list_api_keys(account_id):
+            raise errors.ResourceConflictError(
+                f"API 키가 남아 있어 계정을 삭제할 수 없다: {account_id}"
+            )
+        self._table.delete_item(
+            Key={"pk": account_pk(account_id), "sk": _META_SORT_KEY}
+        )
+
+    def delete_team(self, account_id: str, team_id: str) -> None:
+        """팀을 삭제한다.
+
+        그 팀에 소속된 사용자나 키가 남아 있으면 삭제하지 않는다. 소속을
+        먼저 옮기거나 지워야 한다.
+
+        Args:
+            account_id: 계정 ID.
+            team_id: 삭제할 팀 ID.
+
+        Raises:
+            ResourceNotFoundError: 팀이 없는 경우.
+            ResourceConflictError: 그 팀 소속 사용자·키가 남아 있는 경우.
+        """
+        if self.get_team(account_id, team_id) is None:
+            raise errors.ResourceNotFoundError(
+                f"팀을 찾을 수 없다: account={account_id} team={team_id}"
+            )
+        if any(user.team_id == team_id for user in self.list_users(account_id)):
+            raise errors.ResourceConflictError(
+                f"소속 사용자가 남아 있어 팀을 삭제할 수 없다: {team_id}"
+            )
+        if any(
+            key.team_id == team_id for key in self.list_api_keys(account_id)
+        ):
+            raise errors.ResourceConflictError(
+                f"소속 API 키가 남아 있어 팀을 삭제할 수 없다: {team_id}"
+            )
+        self._table.delete_item(
+            Key={"pk": account_pk(account_id), "sk": team_sk(team_id)}
+        )
+
+    def delete_user(self, account_id: str, user_id: str) -> None:
+        """사용자를 삭제한다.
+
+        그 사용자에게 발급된 키가 남아 있으면 삭제하지 않는다. 키를 먼저
+        회수해야 한다.
+
+        Args:
+            account_id: 계정 ID.
+            user_id: 삭제할 사용자 ID.
+
+        Raises:
+            ResourceNotFoundError: 사용자가 없는 경우.
+            ResourceConflictError: 그 사용자 소유 키가 남아 있는 경우.
+        """
+        if self.get_user(account_id, user_id) is None:
+            raise errors.ResourceNotFoundError(
+                f"사용자를 찾을 수 없다: account={account_id} user={user_id}"
+            )
+        if any(
+            key.user_id == user_id for key in self.list_api_keys(account_id)
+        ):
+            raise errors.ResourceConflictError(
+                f"소유 API 키가 남아 있어 사용자를 삭제할 수 없다: {user_id}"
+            )
+        self._table.delete_item(
+            Key={"pk": account_pk(account_id), "sk": user_sk(user_id)}
         )
 
     def touch_api_key(self, key_hash: str, used_at: str) -> None:

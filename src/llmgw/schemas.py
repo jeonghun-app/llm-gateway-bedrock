@@ -200,3 +200,78 @@ class UpdateStatusRequest(_AdminBase):
     """
 
     status: typing.Literal["active", "disabled"]
+
+
+class UpdateAccountRequest(_AdminBase):
+    """계정 수정 요청.
+
+    부분 수정이다. 요청 본문에 실린 필드만 반영한다. `monthly_budget_usd`
+    를 `null` 로 명시하면 예산을 무제한으로 되돌린다. 필드를 아예 빼면 기존
+    값을 유지한다. 두 경우를 구분하기 위해 `model_fields_set` 을 본다.
+
+    Attributes:
+        name: 표시 이름.
+        monthly_budget_usd: 월 예산. `null` 이면 무제한.
+    """
+
+    name: str | None = pydantic.Field(
+        default=None, min_length=1, max_length=128
+    )
+    monthly_budget_usd: decimal.Decimal | None = pydantic.Field(
+        default=None, ge=0
+    )
+
+
+class UpdateTeamRequest(_AdminBase):
+    """팀 수정 요청. 규칙은 `UpdateAccountRequest` 와 같다.
+
+    Attributes:
+        name: 표시 이름.
+        monthly_budget_usd: 월 예산. `null` 이면 상위 예산만 적용.
+    """
+
+    name: str | None = pydantic.Field(
+        default=None, min_length=1, max_length=128
+    )
+    monthly_budget_usd: decimal.Decimal | None = pydantic.Field(
+        default=None, ge=0
+    )
+
+
+class UpdateUserRequest(_AdminBase):
+    """사용자 수정 요청. 규칙은 `UpdateAccountRequest` 와 같다.
+
+    Attributes:
+        name: 표시 이름.
+        email: 연락용 메일.
+        team_id: 소속 팀 ID. 빈 문자열이면 팀 없음으로 만든다.
+        monthly_budget_usd: 월 예산. `null` 이면 상위 예산만 적용.
+    """
+
+    name: str | None = pydantic.Field(
+        default=None, min_length=1, max_length=128
+    )
+    email: str | None = None
+    team_id: str | None = None
+    monthly_budget_usd: decimal.Decimal | None = pydantic.Field(
+        default=None, ge=0
+    )
+
+
+class UpdateApiKeyRequest(_AdminBase):
+    """API 키 수정 요청. 규칙은 `UpdateAccountRequest` 와 같다.
+
+    키의 소속(계정·팀·사용자)과 해시는 바꿀 수 없다. 소속을 옮기려면 새
+    키를 발급한다.
+
+    Attributes:
+        name: 키 용도 메모.
+        allowed_models: 허용 모델 목록. 빈 목록이면 서버 기본 정책을 따른다.
+        monthly_budget_usd: 키 월 예산. `null` 이면 상위 예산만 적용.
+    """
+
+    name: str | None = None
+    allowed_models: list[str] | None = None
+    monthly_budget_usd: decimal.Decimal | None = pydantic.Field(
+        default=None, ge=0
+    )
