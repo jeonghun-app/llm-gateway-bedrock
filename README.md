@@ -418,10 +418,11 @@ docker run --rm -p 8080:8080 \
 ## 테스트
 
 유닛 테스트는 실제 AWS 를 호출하지 않는다. DynamoDB 는 `moto`, Bedrock 은
-`botocore.stub.Stubber` 와 대역 객체로 대체한다.
+`botocore.stub.Stubber` 와 대역 객체로 대체한다. 대시보드 차트와 관리 UI 는
+`tests/js/` 의 Node 하네스로 검증하며, Node 가 없으면 해당 테스트만 건너뛴다.
 
 ```bash
-# 전체 (320개, 약 55초)
+# 전체 (382개, 약 55초)
 ./.venv/bin/python -m pytest
 
 # 커버리지
