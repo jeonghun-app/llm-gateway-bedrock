@@ -317,6 +317,114 @@ def test_delete_api_key_다른계정의키는삭제하지못한다(
     assert registry.get_api_key_by_hash(api_key.key_hash) is not None
 
 
+def test_rotate_api_key_해시를교체하고아이템하나만남긴다(
+    registry: repository.RegistryRepository,
+) -> None:
+    # Arrange
+    old = _api_key("key-1")
+    registry.put_api_key(old)
+    new_generated = apikey.generate_api_key("test")
+    rotated = old.model_copy(
+        update={
+            "key_hash": new_generated.key_hash,
+            "key_prefix": new_generated.key_prefix,
+        }
+    )
+
+    # Act
+    registry.rotate_api_key(old.key_hash, rotated)
+
+    # Assert: 옛 해시는 사라지고 새 해시로만 조회되며 목록에 하나뿐이다.
+    assert registry.get_api_key_by_hash(old.key_hash) is None
+    assert registry.get_api_key_by_hash(new_generated.key_hash) is not None
+    remaining = registry.list_api_keys("acme")
+    assert len(remaining) == 1
+    assert remaining[0].key_id == "key-1"
+
+
+def test_rotate_api_key_옛키가없으면롤백되어새키도안생긴다(
+    registry: repository.RegistryRepository,
+) -> None:
+    """Delete 조건이 실패하면 트랜잭션 전체가 취소되어 새 키도 생기지 않는다."""
+    # Arrange: 옛 키를 저장하지 않는다(이미 삭제된 상황).
+    old = _api_key("key-1")
+    new_generated = apikey.generate_api_key("test")
+    rotated = old.model_copy(
+        update={
+            "key_hash": new_generated.key_hash,
+            "key_prefix": new_generated.key_prefix,
+        }
+    )
+
+    # Act / Assert
+    with pytest.raises(errors.ResourceNotFoundError):
+        registry.rotate_api_key(old.key_hash, rotated)
+    # 롤백되어 새 해시 아이템이 만들어지지 않아야 한다.
+    assert registry.get_api_key_by_hash(new_generated.key_hash) is None
+    assert registry.list_api_keys("acme") == []
+
+
+def test_rotate_api_key_멱등성토큰을트랜잭션에전달한다() -> None:
+    """`ClientRequestToken` 을 TransactWriteItems 로 넘기는지 확인한다.
+
+    실제 멱등성 보장은 DynamoDB 몫이고 moto 는 이를 구현하지 않는다. 그래서
+    여기서는 우리 코드가 토큰을 트랜잭션 호출에 실어 보내는지만 대역
+    클라이언트로 검증한다. 토큰이 없으면 성공 후 응답 유실 재시도가 새 해시
+    충돌로 조건 실패가 되어 사용자가 새 키를 못 받는다.
+    """
+
+    # Arrange: transact_write_items 호출 인자를 붙잡는 대역 클라이언트.
+    class _CapturingClient:
+        def __init__(self) -> None:
+            self.captured: dict[str, object] = {}
+
+        def transact_write_items(self, **kwargs: object) -> None:
+            self.captured = kwargs
+
+    client = _CapturingClient()
+
+    class _NamedTable:
+        name = "registry"
+
+    repo = repository.RegistryRepository(_NamedTable(), client=client)
+    key = _api_key("key-1")
+
+    # Act
+    repo.rotate_api_key(
+        "old-hash", key, client_request_token="rotate-token-0001"
+    )
+
+    # Assert
+    assert client.captured["ClientRequestToken"] == "rotate-token-0001"
+    assert "TransactItems" in client.captured
+
+
+def test_rotate_api_key_긴토큰은생략한다() -> None:
+    """36자를 넘는 토큰은 DynamoDB 규격 위반이라 실어 보내지 않는다."""
+
+    # Arrange
+    class _CapturingClient:
+        def __init__(self) -> None:
+            self.captured: dict[str, object] = {}
+
+        def transact_write_items(self, **kwargs: object) -> None:
+            self.captured = kwargs
+
+    client = _CapturingClient()
+
+    class _NamedTable:
+        name = "registry"
+
+    repo = repository.RegistryRepository(_NamedTable(), client=client)
+    key = _api_key("key-1")
+
+    # Act
+    repo.rotate_api_key("old-hash", key, client_request_token="x" * 37)
+
+    # Assert
+    assert "ClientRequestToken" not in client.captured
+
+
 def test_touch_api_key_마지막사용시각을갱신한다(
     registry: repository.RegistryRepository,
 ) -> None:

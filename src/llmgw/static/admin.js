@@ -43,6 +43,21 @@
     }
   }
 
+  /**
+   * 상단 계정 선택 목록을 다시 채운다.
+   *
+   * 계정을 만들거나 지운 직후 호출한다. 모니터링 화면(app.js)이 노출한 훅을
+   * 쓴다. 훅이 아직 준비되지 않았으면(로드 순서 등) 조용히 넘어간다.
+   *
+   * @returns {!Promise<void>}
+   */
+  async function syncAccountSelect() {
+    const dashboard = window.LlmgwDashboard;
+    if (dashboard && typeof dashboard.reloadAccounts === 'function') {
+      await dashboard.reloadAccounts();
+    }
+  }
+
   // -- API ------------------------------------------------------------------
 
   /**
@@ -458,6 +473,7 @@
             });
             setStatus('계정을 만들었다.', 'ok');
             await renderManage();
+            await syncAccountSelect();
           }
         );
       })
@@ -492,6 +508,7 @@
                 );
                 setStatus('계정을 수정했다.', 'ok');
                 await renderManage();
+                await syncAccountSelect();
               }
             );
           },
@@ -509,6 +526,7 @@
             );
             setStatus('계정 상태를 변경했다.', 'ok');
             await renderManage();
+            await syncAccountSelect();
           },
         },
         {
@@ -525,6 +543,7 @@
                 );
                 setStatus('계정을 삭제했다.', 'ok');
                 await renderManage();
+                await syncAccountSelect();
               }
             );
           },

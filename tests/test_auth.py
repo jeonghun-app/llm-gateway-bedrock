@@ -161,7 +161,7 @@ def test_authenticate_비활성계정_AuthenticationError(
     plaintext = _seed(registry, account_status=domain.EntityStatus.DISABLED)
 
     # Act / Assert
-    with pytest.raises(errors.AuthenticationError, match="계정"):
+    with pytest.raises(errors.AuthenticationError, match="유효하지 않거나"):
         authenticator.authenticate(f"Bearer {plaintext}")
 
 
@@ -173,7 +173,7 @@ def test_authenticate_비활성팀_AuthenticationError(
     plaintext = _seed(registry, team_status=domain.EntityStatus.DISABLED)
 
     # Act / Assert
-    with pytest.raises(errors.AuthenticationError, match="팀"):
+    with pytest.raises(errors.AuthenticationError, match="유효하지 않거나"):
         authenticator.authenticate(f"Bearer {plaintext}")
 
 
@@ -185,7 +185,7 @@ def test_authenticate_비활성사용자_AuthenticationError(
     plaintext = _seed(registry, user_status=domain.EntityStatus.DISABLED)
 
     # Act / Assert
-    with pytest.raises(errors.AuthenticationError, match="사용자"):
+    with pytest.raises(errors.AuthenticationError, match="유효하지 않거나"):
         authenticator.authenticate(f"Bearer {plaintext}")
 
 
@@ -207,7 +207,64 @@ def test_authenticate_계정이삭제된키_AuthenticationError(
     )
 
     # Act / Assert
-    with pytest.raises(errors.AuthenticationError, match="계정"):
+    with pytest.raises(errors.AuthenticationError, match="유효하지 않거나"):
+        authenticator.authenticate(f"Bearer {generated.plaintext}")
+
+
+def test_authenticate_팀이삭제된키_거부한다(
+    authenticator: auth.Authenticator,
+    registry: repository.RegistryRepository,
+) -> None:
+    """키에 team_id 가 있는데 팀 레코드가 없으면(삭제·최종 일관성) 거부한다.
+
+    예전에는 팀이 None 이면 통과하는 fail-open 이었다. 고아 키가 계속
+    인증되면 안 된다.
+    """
+    # Arrange: 계정·사용자·키는 만들되 팀은 만들지 않는다. 키는 존재하지
+    # 않는 팀을 참조한다.
+    generated = apikey.generate_api_key("test")
+    registry.put_account(domain.Account(account_id="acme", name="Acme"))
+    registry.put_user(
+        domain.User(
+            account_id="acme", user_id="alice", name="앨리스", team_id="ghost"
+        )
+    )
+    registry.put_api_key(
+        domain.ApiKey(
+            key_id="key-1",
+            key_hash=generated.key_hash,
+            key_prefix=generated.key_prefix,
+            account_id="acme",
+            team_id="ghost",
+            user_id="alice",
+        )
+    )
+
+    # Act / Assert
+    with pytest.raises(errors.AuthenticationError, match="유효하지 않거나"):
+        authenticator.authenticate(f"Bearer {generated.plaintext}")
+
+
+def test_authenticate_사용자가삭제된키_거부한다(
+    authenticator: auth.Authenticator,
+    registry: repository.RegistryRepository,
+) -> None:
+    """키의 사용자 레코드가 없으면 거부한다(예전엔 통과하던 fail-open)."""
+    # Arrange: 계정·키는 만들되 사용자는 만들지 않는다.
+    generated = apikey.generate_api_key("test")
+    registry.put_account(domain.Account(account_id="acme", name="Acme"))
+    registry.put_api_key(
+        domain.ApiKey(
+            key_id="key-1",
+            key_hash=generated.key_hash,
+            key_prefix=generated.key_prefix,
+            account_id="acme",
+            user_id="ghost",
+        )
+    )
+
+    # Act / Assert
+    with pytest.raises(errors.AuthenticationError, match="유효하지 않거나"):
         authenticator.authenticate(f"Bearer {generated.plaintext}")
 
 

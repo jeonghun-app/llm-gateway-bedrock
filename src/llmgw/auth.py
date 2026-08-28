@@ -97,23 +97,27 @@ class Authenticator:
         account = self._load_account(api_key.account_id)
         if account is None or account.status is not domain.EntityStatus.ACTIVE:
             raise errors.AuthenticationError(
-                f"계정이 비활성 상태다: {api_key.account_id}"
+                "API 키가 유효하지 않거나 비활성 상태다."
             )
 
         team: domain.Team | None = None
         if api_key.team_id:
             team = self._load_team(api_key.account_id, api_key.team_id)
-            if team is not None and (
-                team.status is not domain.EntityStatus.ACTIVE
-            ):
+            # 팀이 사라졌으면(삭제되었거나 최종 일관성으로 아직 안 보이면)
+            # 거부한다. 예전에는 팀이 None 이면 통과시켜, 삭제된 팀을 참조하는
+            # 고아 키가 계속 인증되는 fail-open 이었다. 존재 여부를 외부에
+            # 구분해 알리지 않도록 키 무효와 같은 메시지를 쓴다.
+            if team is None or team.status is not domain.EntityStatus.ACTIVE:
                 raise errors.AuthenticationError(
-                    f"팀이 비활성 상태다: {api_key.team_id}"
+                    "API 키가 유효하지 않거나 비활성 상태다."
                 )
 
+        # 사용자도 마찬가지로 fail-closed 다. 키는 반드시 사용자에 귀속되므로
+        # 사용자가 사라졌으면 그 키는 더 이상 유효하지 않다.
         user = self._load_user(api_key.account_id, api_key.user_id)
-        if user is not None and (user.status is not domain.EntityStatus.ACTIVE):
+        if user is None or user.status is not domain.EntityStatus.ACTIVE:
             raise errors.AuthenticationError(
-                f"사용자가 비활성 상태다: {api_key.user_id}"
+                "API 키가 유효하지 않거나 비활성 상태다."
             )
 
         allowed = api_key.allowed_models or (

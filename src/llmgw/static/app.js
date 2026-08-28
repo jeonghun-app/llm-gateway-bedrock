@@ -692,6 +692,21 @@
     } else {
       setStatus('관리 토큰을 입력하고 조회를 누른다.');
     }
+
+    // 관리 화면(admin.js)이 계정을 만들고 지운 직후 상단 계정 선택 목록을
+    // 다시 채울 수 있도록 최소한의 훅만 노출한다. 두 화면이 같은 select
+    // 요소와 토큰을 공유하므로, 관리 작업 후 이 함수를 부르면 목록이 즉시
+    // 최신 상태가 된다.
+    window.LlmgwDashboard = {
+      reloadAccounts: async function () {
+        try {
+          await loadAccounts();
+        } catch (error) {
+          // 계정 목록 갱신 실패가 관리 작업 자체를 되돌리지는 않는다.
+          setStatus('계정 목록 갱신 실패: ' + error.message, 'error');
+        }
+      },
+    };
   }
 
   init();

@@ -19,6 +19,7 @@ from llmgw import apikey
 from llmgw import clock
 from llmgw import domain
 from llmgw import errors
+from llmgw import observability
 from llmgw import schemas
 from llmgw import services as services_module
 
@@ -852,8 +853,13 @@ def rotate_api_key(
     )
     # 새 해시 생성과 옛 해시 삭제를 하나의 트랜잭션으로 묶는다. 별도 호출로
     # 나누면 두 번째가 실패했을 때 두 키가 모두 유효하고 같은 key_id 가 GSI
-    # 에 중복으로 남는다.
-    services.registry.rotate_api_key(existing.key_hash, rotated)
+    # 에 중복으로 남는다. 상관 ID 를 멱등성 토큰으로 넘겨, 성공 후 응답만
+    # 유실된 재시도가 조건 실패로 새 키를 못 받는 일을 막는다.
+    services.registry.rotate_api_key(
+        existing.key_hash,
+        rotated,
+        client_request_token=observability.get_correlation_id() or None,
+    )
     services.logger.info(
         "API 키를 재발급했다",
         extra={"account_id": account_id, "key_id": key_id},

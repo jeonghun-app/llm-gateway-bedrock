@@ -623,7 +623,13 @@ class RegistryRepository:
             Key={"pk": items[0]["pk"], "sk": _META_SORT_KEY}
         )
 
-    def rotate_api_key(self, old_key_hash: str, rotated: domain.ApiKey) -> None:
+    def rotate_api_key(
+        self,
+        old_key_hash: str,
+        rotated: domain.ApiKey,
+        *,
+        client_request_token: str | None = None,
+    ) -> None:
         """키를 원자적으로 재발급한다.
 
         새 해시 아이템 생성과 옛 해시 아이템 삭제를 하나의
@@ -631,9 +637,17 @@ class RegistryRepository:
         가 실패했을 때 옛 키와 새 키가 모두 유효하고 같은 `key_id` 가 GSI 에
         중복으로 남는다. 트랜잭션은 둘 다 성공하거나 둘 다 취소되게 한다.
 
+        `client_request_token` 을 주면 `ClientRequestToken` 으로 전달해 멱등성을
+        확보한다. 트랜잭션이 성공했지만 응답만 유실되어 같은 토큰으로 재시도
+        하면, DynamoDB 가 조건 실패 대신 성공으로 처리한다(약 10분 창). 이게
+        없으면 재시도가 새 해시 충돌로 조건 실패가 되어, 사용자가 새 평문 키를
+        영영 받지 못할 수 있다. DynamoDB 규격상 1~36자만 허용되므로 그 범위를
+        벗어나면 토큰을 생략한다.
+
         Args:
             old_key_hash: 무효화할 옛 키의 해시.
             rotated: 새 해시·접두어를 담은 키. `key_id` 는 그대로다.
+            client_request_token: 멱등성 토큰. 보통 관리 요청의 상관 ID.
 
         Raises:
             GatewayError: 트랜잭션 클라이언트가 주입되지 않은 경우.
@@ -688,7 +702,12 @@ class RegistryRepository:
             },
         ]
         try:
-            self._client.transact_write_items(TransactItems=transact_items)
+            transact_kwargs: _JsonDict = {"TransactItems": transact_items}
+            # DynamoDB 는 1~36자 토큰만 받는다. 범위를 벗어나면 멱등성 없이
+            # 진행하되 호출 자체는 막지 않는다.
+            if client_request_token and 1 <= len(client_request_token) <= 36:
+                transact_kwargs["ClientRequestToken"] = client_request_token
+            self._client.transact_write_items(**transact_kwargs)
         except botocore.exceptions.ClientError as exc:
             reasons = exc.response.get("CancellationReasons") or []
             codes = [reason.get("Code") for reason in reasons]
