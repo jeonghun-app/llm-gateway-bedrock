@@ -220,8 +220,13 @@
       });
       submit.disabled = true;
       try {
-        await onSubmit(values);
-        closeModal();
+        // onSubmit 이 truthy 를 반환하면 이 폼 모달을 닫지 않는다. 발급·
+        // 재발급처럼 이어서 다른 모달(평문 키 표시)을 여는 흐름에서, 여기서
+        // closeModal 을 부르면 방금 연 키 모달까지 닫혀 키를 볼 수 없다.
+        const keepOpen = await onSubmit(values);
+        if (!keepOpen) {
+          closeModal();
+        }
       } catch (submitError) {
         error.textContent = submitError.message;
       } finally {
@@ -245,9 +250,13 @@
    * 확인 대화상자를 연다.
    *
    * @param {string} message 안내 문구.
-   * @param {function():!Promise<void>} onConfirm 확인 처리기.
+   * @param {function():!Promise<(boolean|void)>} onConfirm 확인 처리기.
+   *     truthy 를 반환하면 이 대화상자를 닫지 않는다(예: 이어서 평문 키
+   *     모달을 여는 재발급 흐름).
+   * @param {{confirmLabel?: string, confirmKind?: string}=} options 표시 옵션.
    */
-  function openConfirm(message, onConfirm) {
+  function openConfirm(message, onConfirm, options) {
+    const opts = options || {};
     dom.modalRoot.replaceChildren();
 
     const dialog = document.createElement('div');
@@ -274,14 +283,16 @@
 
     const confirm = document.createElement('button');
     confirm.type = 'button';
-    confirm.className = 'danger';
-    confirm.textContent = '삭제';
+    confirm.className = opts.confirmKind || 'danger';
+    confirm.textContent = opts.confirmLabel || '삭제';
     confirm.addEventListener('click', async function () {
       error.textContent = '';
       confirm.disabled = true;
       try {
-        await onConfirm();
-        closeModal();
+        const keepOpen = await onConfirm();
+        if (!keepOpen) {
+          closeModal();
+        }
       } catch (confirmError) {
         error.textContent = confirmError.message;
         confirm.disabled = false;
@@ -934,7 +945,10 @@
             await renderManage();
             if (created && created.api_key) {
               showPlaintextKey(created.api_key);
+              // 평문 키 모달을 열었으므로 폼 모달의 자동 닫기를 막는다.
+              return true;
             }
+            return false;
           }
         );
       })
@@ -1008,8 +1022,12 @@
                 await renderManage();
                 if (rotated && rotated.api_key) {
                   showPlaintextKey(rotated.api_key);
+                  // 평문 키 모달을 열었으므로 확인 대화상자의 자동 닫기를 막는다.
+                  return true;
                 }
-              }
+                return false;
+              },
+              { confirmLabel: '재발급', confirmKind: 'primary' }
             );
           },
         },

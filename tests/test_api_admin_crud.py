@@ -531,3 +531,183 @@ def test_없는키재발급_404(
 
     # Assert
     assert response.status_code == 404
+
+
+# -- PATCH null 검증 (도메인 불변식) ----------------------------------------
+
+
+def test_계정이름을null로수정하면거부한다(
+    client: testclient.TestClient,
+    admin_headers: dict[str, str],
+) -> None:
+    """이름은 문자열이어야 한다. null 을 그대로 저장하면 불변식이 깨진다."""
+    # Arrange
+    client.post(
+        "/admin/accounts",
+        headers=admin_headers,
+        json={"account_id": "acme", "name": "A"},
+    )
+
+    # Act
+    response = client.patch(
+        "/admin/accounts/acme",
+        headers=admin_headers,
+        json={"name": None},
+    )
+
+    # Assert
+    assert response.status_code == 400, response.text
+
+
+def test_계정이름을빈문자열로수정하면거부한다(
+    client: testclient.TestClient,
+    admin_headers: dict[str, str],
+) -> None:
+    # Arrange
+    client.post(
+        "/admin/accounts",
+        headers=admin_headers,
+        json={"account_id": "acme", "name": "A"},
+    )
+
+    # Act
+    response = client.patch(
+        "/admin/accounts/acme",
+        headers=admin_headers,
+        json={"name": ""},
+    )
+
+    # Assert
+    assert response.status_code == 400, response.text
+
+
+def test_사용자이름을null로수정하면거부한다(
+    client: testclient.TestClient,
+    admin_headers: dict[str, str],
+    registry: repository.RegistryRepository,
+) -> None:
+    # Arrange
+    conftest.seed_account_tree(registry)
+
+    # Act
+    response = client.patch(
+        "/admin/accounts/acme/users/alice",
+        headers=admin_headers,
+        json={"name": None},
+    )
+
+    # Assert
+    assert response.status_code == 400, response.text
+
+
+def test_사용자팀을null로수정하면거부한다(
+    client: testclient.TestClient,
+    admin_headers: dict[str, str],
+    registry: repository.RegistryRepository,
+) -> None:
+    """팀은 문자열이어야 한다. 팀을 비우려면 빈 문자열을 쓴다."""
+    # Arrange
+    conftest.seed_account_tree(registry)
+
+    # Act
+    response = client.patch(
+        "/admin/accounts/acme/users/alice",
+        headers=admin_headers,
+        json={"team_id": None},
+    )
+
+    # Assert
+    assert response.status_code == 400, response.text
+
+
+def test_사용자팀을빈문자열로비운다(
+    client: testclient.TestClient,
+    admin_headers: dict[str, str],
+    registry: repository.RegistryRepository,
+) -> None:
+    """빈 문자열은 팀 없음으로 허용된다."""
+    # Arrange
+    conftest.seed_account_tree(registry)
+
+    # Act
+    response = client.patch(
+        "/admin/accounts/acme/users/alice",
+        headers=admin_headers,
+        json={"team_id": ""},
+    )
+
+    # Assert
+    assert response.status_code == 200, response.text
+    assert response.json()["team_id"] == ""
+
+
+def test_키이름을null로수정하면거부한다(
+    client: testclient.TestClient,
+    admin_headers: dict[str, str],
+    registry: repository.RegistryRepository,
+) -> None:
+    # Arrange
+    conftest.seed_account_tree(registry)
+    created = _seed_key(client, admin_headers)
+
+    # Act
+    response = client.patch(
+        "/admin/accounts/acme/keys/" + str(created["key_id"]),
+        headers=admin_headers,
+        json={"name": None},
+    )
+
+    # Assert
+    assert response.status_code == 400, response.text
+
+
+def test_예산은null로되돌릴수있다(
+    client: testclient.TestClient,
+    admin_headers: dict[str, str],
+    registry: repository.RegistryRepository,
+) -> None:
+    """예산 필드만 null 을 허용한다(무제한으로 되돌리기)."""
+    # Arrange
+    conftest.seed_account_tree(registry)
+
+    # Act
+    response = client.patch(
+        "/admin/accounts/acme/users/alice",
+        headers=admin_headers,
+        json={"monthly_budget_usd": None},
+    )
+
+    # Assert
+    assert response.status_code == 200, response.text
+    assert response.json()["monthly_budget_usd"] is None
+
+
+# -- 재발급 원자성 ----------------------------------------------------------
+
+
+def test_재발급은옛해시아이템을남기지않는다(
+    client: testclient.TestClient,
+    admin_headers: dict[str, str],
+    registry: repository.RegistryRepository,
+) -> None:
+    """트랜잭션으로 옛 해시 Put/Delete 를 묶어 옛 아이템이 남지 않아야 한다."""
+    # Arrange
+    conftest.seed_account_tree(registry)
+    created = _seed_key(client, admin_headers)
+    old_plaintext = str(created["api_key"])
+    from llmgw import apikey
+
+    old_hash = apikey.hash_api_key(old_plaintext)
+
+    # Act
+    client.post(
+        "/admin/accounts/acme/keys/" + str(created["key_id"]) + "/rotate",
+        headers=admin_headers,
+    )
+
+    # Assert: 옛 해시로는 더 이상 조회되지 않는다.
+    assert registry.get_api_key_by_hash(old_hash) is None
+    # 새 해시로 조회한 키는 하나뿐이고 key_id 가 유지된다.
+    remaining = registry.list_api_keys("acme")
+    assert len(remaining) == 1
+    assert remaining[0].key_id == created["key_id"]

@@ -831,8 +831,8 @@ def rotate_api_key(
 
     같은 `key_id` 를 유지한 채 평문 키(그리고 해시·접두어)만 새로 만든다.
     예산·허용 모델·소속·이름은 그대로 이어받는다. 옛 평문 키는 즉시
-    무효가 된다. 키 아이템의 파티션 키가 해시라서, 옛 해시 아이템을 지우고
-    새 해시로 다시 쓴다.
+    무효가 된다. 새 해시 생성과 옛 해시 삭제는 하나의 트랜잭션으로 처리해,
+    중간 실패로 두 키가 동시에 유효해지는 상황을 막는다.
 
     평문 키는 이 응답에서만 볼 수 있다.
 
@@ -850,12 +850,10 @@ def rotate_api_key(
             "last_used_at": "",
         }
     )
-    # 새 해시로 먼저 쓰고, 성공하면 옛 해시 아이템을 지운다. 순서를
-    # 뒤집으면 중간에 실패했을 때 키가 사라진다. 옛 아이템과 새 아이템은
-    # 같은 key_id 를 가지므로 GSI(key_id) 로 지우면 안 되고, 옛 해시를
-    # 파티션 키로 직접 지운다.
-    services.registry.put_api_key(rotated)
-    services.registry.delete_api_key_by_hash(existing.key_hash)
+    # 새 해시 생성과 옛 해시 삭제를 하나의 트랜잭션으로 묶는다. 별도 호출로
+    # 나누면 두 번째가 실패했을 때 두 키가 모두 유효하고 같은 key_id 가 GSI
+    # 에 중복으로 남는다.
+    services.registry.rotate_api_key(existing.key_hash, rotated)
     services.logger.info(
         "API 키를 재발급했다",
         extra={"account_id": account_id, "key_id": key_id},

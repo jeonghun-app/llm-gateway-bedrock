@@ -88,7 +88,8 @@ def build_services(settings: config.Settings) -> Services:
     dynamodb = repository.create_dynamodb_resource(settings.aws_region)
     dynamodb_client = repository.create_dynamodb_client(settings.aws_region)
     registry = repository.RegistryRepository(
-        dynamodb.Table(settings.registry_table)
+        dynamodb.Table(settings.registry_table),
+        client=dynamodb_client,
     )
     usage_store = repository.UsageStore(
         usage_table=dynamodb.Table(settings.usage_table),

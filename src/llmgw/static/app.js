@@ -639,9 +639,11 @@
    * @param {!Element} button 선택된 탭 버튼.
    */
   function selectTab(button) {
-    document.querySelectorAll('[role="tab"]').forEach(function (tab) {
-      tab.setAttribute('aria-selected', String(tab === button));
-    });
+    document
+      .querySelectorAll('#screen-monitor [role="tab"]')
+      .forEach(function (tab) {
+        tab.setAttribute('aria-selected', String(tab === button));
+      });
     dom.panel.setAttribute('aria-labelledby', button.id);
     activeView = button.getAttribute('data-view');
     renderTable();
@@ -675,11 +677,13 @@
       });
     });
 
-    document.querySelectorAll('[role="tab"]').forEach(function (tab) {
-      tab.addEventListener('click', function () {
-        selectTab(tab);
+    document
+      .querySelectorAll('#screen-monitor [role="tab"]')
+      .forEach(function (tab) {
+        tab.addEventListener('click', function () {
+          selectTab(tab);
+        });
       });
-    });
 
     renderTable();
 

@@ -279,13 +279,21 @@ def _totals_from_item(item: _JsonDict) -> domain.UsageTotals:
 class RegistryRepository:
     """계정·팀·사용자·API 키 저장소."""
 
-    def __init__(self, table: typing.Any) -> None:
+    def __init__(self, table: typing.Any, client: typing.Any = None) -> None:
         """저장소를 만든다.
 
         Args:
             table: boto3 DynamoDB `Table` 리소스.
+            client: 저수준 DynamoDB 클라이언트. 트랜잭션(키 재발급)에 쓴다.
+                생략하면 트랜잭션 경로만 사용할 수 없고 나머지는 동작한다.
+                리소스의 `meta.client` 를 넘기면 안 된다. 이유는
+                `create_dynamodb_client` 문서를 참고한다.
         """
         self._table = table
+        self._client = client
+        # 트랜잭션 아이템은 테이블 이름을 명시해야 한다. 리소스에서 이름을
+        # 얻어 두어 호출자가 따로 전달하지 않아도 되게 한다.
+        self._table_name = getattr(table, "name", None)
 
     # -- 계정 ---------------------------------------------------------------
 
@@ -615,19 +623,86 @@ class RegistryRepository:
             Key={"pk": items[0]["pk"], "sk": _META_SORT_KEY}
         )
 
-    def delete_api_key_by_hash(self, key_hash: str) -> None:
-        """해시로 API 키를 직접 삭제한다.
+    def rotate_api_key(self, old_key_hash: str, rotated: domain.ApiKey) -> None:
+        """키를 원자적으로 재발급한다.
 
-        재발급 시 옛 해시 아이템만 지우는 데 쓴다. 옛 아이템과 새 아이템이
-        같은 `key_id` 를 가져 GSI 로는 구분되지 않기 때문이다. 존재하지 않아도
-        오류를 내지 않는다(멱등).
+        새 해시 아이템 생성과 옛 해시 아이템 삭제를 하나의
+        `TransactWriteItems` 로 묶는다. 두 쓰기를 별도 호출로 나누면, 두 번째
+        가 실패했을 때 옛 키와 새 키가 모두 유효하고 같은 `key_id` 가 GSI 에
+        중복으로 남는다. 트랜잭션은 둘 다 성공하거나 둘 다 취소되게 한다.
 
         Args:
-            key_hash: 삭제할 키의 해시.
+            old_key_hash: 무효화할 옛 키의 해시.
+            rotated: 새 해시·접두어를 담은 키. `key_id` 는 그대로다.
+
+        Raises:
+            GatewayError: 트랜잭션 클라이언트가 주입되지 않은 경우.
+            ResourceConflictError: 새 해시가 이미 존재하는 경우(사실상 없음).
+            ResourceNotFoundError: 옛 키가 이미 사라진 경우.
         """
-        self._table.delete_item(
-            Key={"pk": key_pk(key_hash), "sk": _META_SORT_KEY}
+        if self._client is None or self._table_name is None:
+            raise errors.GatewayError(
+                "재발급에는 트랜잭션 클라이언트가 필요하다."
+            )
+        new_item = _strip_none(
+            {
+                "pk": key_pk(rotated.key_hash),
+                "sk": _META_SORT_KEY,
+                "gsi1pk": account_pk(rotated.account_id),
+                "gsi1sk": f"KEY#{rotated.key_id}",
+                "entity": "api_key",
+                "key_id": rotated.key_id,
+                "key_hash": rotated.key_hash,
+                "key_prefix": rotated.key_prefix,
+                "account_id": rotated.account_id,
+                "team_id": rotated.team_id,
+                "user_id": rotated.user_id,
+                "display_name": rotated.name,
+                "allowed_models": list(rotated.allowed_models),
+                "monthly_budget_usd": rotated.monthly_budget_usd,
+                "status": rotated.status.value,
+                "created_at": rotated.created_at,
+                "last_used_at": rotated.last_used_at,
+            }
         )
+        transact_items = [
+            {
+                "Put": {
+                    "TableName": self._table_name,
+                    "Item": {
+                        name: _serialize(value)
+                        for name, value in new_item.items()
+                    },
+                    "ConditionExpression": "attribute_not_exists(pk)",
+                }
+            },
+            {
+                "Delete": {
+                    "TableName": self._table_name,
+                    "Key": {
+                        "pk": _serialize(key_pk(old_key_hash)),
+                        "sk": _serialize(_META_SORT_KEY),
+                    },
+                    "ConditionExpression": "attribute_exists(pk)",
+                }
+            },
+        ]
+        try:
+            self._client.transact_write_items(TransactItems=transact_items)
+        except botocore.exceptions.ClientError as exc:
+            reasons = exc.response.get("CancellationReasons") or []
+            codes = [reason.get("Code") for reason in reasons]
+            # reasons[0] 은 Put(새 해시 충돌), reasons[1] 은 Delete(옛 키 부재).
+            if len(codes) > 0 and codes[0] == "ConditionalCheckFailed":
+                raise errors.ResourceConflictError(
+                    "이미 존재하는 키 해시로 재발급을 시도했다:"
+                    f" {rotated.key_id}"
+                ) from exc
+            if len(codes) > 1 and codes[1] == "ConditionalCheckFailed":
+                raise errors.ResourceNotFoundError(
+                    f"재발급할 키가 이미 없다: {rotated.key_id}"
+                ) from exc
+            raise
 
     # -- 삭제 (참조 무결성) --------------------------------------------------
 

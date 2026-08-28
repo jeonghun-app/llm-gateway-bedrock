@@ -365,7 +365,7 @@
       },
       "UpdateAccountRequest": {
         "additionalProperties": false,
-        "description": "계정 수정 요청.\n\n부분 수정이다. 요청 본문에 실린 필드만 반영한다. `monthly_budget_usd`\n를 `null` 로 명시하면 예산을 무제한으로 되돌린다. 필드를 아예 빼면 기존\n값을 유지한다. 두 경우를 구분하기 위해 `model_fields_set` 을 본다.\n\nAttributes:\n    name: 표시 이름.\n    monthly_budget_usd: 월 예산. `null` 이면 무제한.",
+        "description": "계정 수정 요청.\n\n부분 수정이다. 요청 본문에 실린 필드만 반영한다. `monthly_budget_usd`\n를 `null` 로 명시하면 예산을 무제한으로 되돌린다. 필드를 아예 빼면 기존\n값을 유지한다. 두 경우를 구분하기 위해 `model_fields_set` 을 본다.\n\n문자열 필드는 `null` 을 허용하지 않는다. 도메인 모델에서 이름은 항상\n문자열이어야 하는데, `null` 을 그대로 저장하면 불변식이 깨지기 때문이다.\n값을 비우려면 예산처럼 `null` 을 쓰는 대신 빈 문자열을 명시해야 하는\n필드(이메일 등)만 그렇게 다룬다.\n\nAttributes:\n    name: 표시 이름. 보내면 비어 있지 않아야 한다.\n    monthly_budget_usd: 월 예산. `null` 이면 무제한.",
         "properties": {
           "monthly_budget_usd": {
             "anyOf": [
@@ -384,17 +384,11 @@
             "title": "Monthly Budget Usd"
           },
           "name": {
-            "anyOf": [
-              {
-                "maxLength": 128,
-                "minLength": 1,
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Name"
+            "default": "",
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
           }
         },
         "title": "UpdateAccountRequest",
@@ -402,21 +396,14 @@
       },
       "UpdateApiKeyRequest": {
         "additionalProperties": false,
-        "description": "API 키 수정 요청. 규칙은 `UpdateAccountRequest` 와 같다.\n\n키의 소속(계정·팀·사용자)과 해시는 바꿀 수 없다. 소속을 옮기려면 새\n키를 발급한다.\n\nAttributes:\n    name: 키 용도 메모.\n    allowed_models: 허용 모델 목록. 빈 목록이면 서버 기본 정책을 따른다.\n    monthly_budget_usd: 키 월 예산. `null` 이면 상위 예산만 적용.",
+        "description": "API 키 수정 요청. 규칙은 `UpdateAccountRequest` 와 같다.\n\n키의 소속(계정·팀·사용자)과 해시는 바꿀 수 없다. 소속을 옮기려면 새\n키를 발급한다. 문자열·목록 필드는 `null` 을 허용하지 않는다.\n\nAttributes:\n    name: 키 용도 메모. 빈 문자열이면 지운다.\n    allowed_models: 허용 모델 목록. 빈 목록이면 서버 기본 정책을 따른다.\n    monthly_budget_usd: 키 월 예산. `null` 이면 상위 예산만 적용.",
         "properties": {
           "allowed_models": {
-            "anyOf": [
-              {
-                "items": {
-                  "type": "string"
-                },
-                "type": "array"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Allowed Models"
+            "items": {
+              "type": "string"
+            },
+            "title": "Allowed Models",
+            "type": "array"
           },
           "monthly_budget_usd": {
             "anyOf": [
@@ -435,15 +422,9 @@
             "title": "Monthly Budget Usd"
           },
           "name": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Name"
+            "default": "",
+            "title": "Name",
+            "type": "string"
           }
         },
         "title": "UpdateApiKeyRequest",
@@ -470,7 +451,7 @@
       },
       "UpdateTeamRequest": {
         "additionalProperties": false,
-        "description": "팀 수정 요청. 규칙은 `UpdateAccountRequest` 와 같다.\n\nAttributes:\n    name: 표시 이름.\n    monthly_budget_usd: 월 예산. `null` 이면 상위 예산만 적용.",
+        "description": "팀 수정 요청. 규칙은 `UpdateAccountRequest` 와 같다.\n\nAttributes:\n    name: 표시 이름. 보내면 비어 있지 않아야 한다.\n    monthly_budget_usd: 월 예산. `null` 이면 상위 예산만 적용.",
         "properties": {
           "monthly_budget_usd": {
             "anyOf": [
@@ -489,17 +470,11 @@
             "title": "Monthly Budget Usd"
           },
           "name": {
-            "anyOf": [
-              {
-                "maxLength": 128,
-                "minLength": 1,
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Name"
+            "default": "",
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
           }
         },
         "title": "UpdateTeamRequest",
@@ -507,18 +482,12 @@
       },
       "UpdateUserRequest": {
         "additionalProperties": false,
-        "description": "사용자 수정 요청. 규칙은 `UpdateAccountRequest` 와 같다.\n\nAttributes:\n    name: 표시 이름.\n    email: 연락용 메일.\n    team_id: 소속 팀 ID. 빈 문자열이면 팀 없음으로 만든다.\n    monthly_budget_usd: 월 예산. `null` 이면 상위 예산만 적용.",
+        "description": "사용자 수정 요청. 규칙은 `UpdateAccountRequest` 와 같다.\n\n문자열 필드는 `null` 을 허용하지 않는다. 이메일과 팀은 빈 문자열로\n비울 수 있다(팀은 빈 문자열이면 팀 없음).\n\nAttributes:\n    name: 표시 이름. 보내면 비어 있지 않아야 한다.\n    email: 연락용 메일. 빈 문자열이면 지운다.\n    team_id: 소속 팀 ID. 빈 문자열이면 팀 없음으로 만든다.\n    monthly_budget_usd: 월 예산. `null` 이면 상위 예산만 적용.",
         "properties": {
           "email": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Email"
+            "default": "",
+            "title": "Email",
+            "type": "string"
           },
           "monthly_budget_usd": {
             "anyOf": [
@@ -537,28 +506,16 @@
             "title": "Monthly Budget Usd"
           },
           "name": {
-            "anyOf": [
-              {
-                "maxLength": 128,
-                "minLength": 1,
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Name"
+            "default": "",
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
           },
           "team_id": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Team Id"
+            "default": "",
+            "title": "Team Id",
+            "type": "string"
           }
         },
         "title": "UpdateUserRequest",
@@ -609,7 +566,7 @@
   "info": {
     "description": "Amazon Bedrock 앞단의 OpenAI 호환 게이트웨이.\n\n- `POST /v1/chat/completions` — OpenAI Chat Completions 호환 (스트리밍 지원)\n- `GET /v1/models` — 호출 가능한 모델 목록\n- `/admin/*` — 계정·팀·사용자·API 키 관리 (`X-Admin-Token` 필요)\n- `/analytics/*` — 계정·팀·사용자·모델별 사용량 집계 (`X-Admin-Token` 필요)\n- `/ui` — 모니터링 대시보드",
     "title": "LLM Gateway",
-    "version": "1.1.0"
+    "version": "1.2.0"
   },
   "openapi": "3.1.0",
   "paths": {
@@ -1244,7 +1201,7 @@
     },
     "/admin/accounts/{account_id}/keys/{key_id}/rotate": {
       "post": {
-        "description": "API 키를 재발급한다.\n\n같은 `key_id` 를 유지한 채 평문 키(그리고 해시·접두어)만 새로 만든다.\n예산·허용 모델·소속·이름은 그대로 이어받는다. 옛 평문 키는 즉시\n무효가 된다. 키 아이템의 파티션 키가 해시라서, 옛 해시 아이템을 지우고\n새 해시로 다시 쓴다.\n\n평문 키는 이 응답에서만 볼 수 있다.\n\nRaises:\n    ResourceNotFoundError: 계정이나 키가 없는 경우.",
+        "description": "API 키를 재발급한다.\n\n같은 `key_id` 를 유지한 채 평문 키(그리고 해시·접두어)만 새로 만든다.\n예산·허용 모델·소속·이름은 그대로 이어받는다. 옛 평문 키는 즉시\n무효가 된다. 새 해시 생성과 옛 해시 삭제는 하나의 트랜잭션으로 처리해,\n중간 실패로 두 키가 동시에 유효해지는 상황을 막는다.\n\n평문 키는 이 응답에서만 볼 수 있다.\n\nRaises:\n    ResourceNotFoundError: 계정이나 키가 없는 경우.",
         "operationId": "rotate_api_key_admin_accounts__account_id__keys__key_id__rotate_post",
         "parameters": [
           {

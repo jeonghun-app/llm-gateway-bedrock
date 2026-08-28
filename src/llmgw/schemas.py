@@ -209,14 +209,17 @@ class UpdateAccountRequest(_AdminBase):
     를 `null` 로 명시하면 예산을 무제한으로 되돌린다. 필드를 아예 빼면 기존
     값을 유지한다. 두 경우를 구분하기 위해 `model_fields_set` 을 본다.
 
+    문자열 필드는 `null` 을 허용하지 않는다. 도메인 모델에서 이름은 항상
+    문자열이어야 하는데, `null` 을 그대로 저장하면 불변식이 깨지기 때문이다.
+    값을 비우려면 예산처럼 `null` 을 쓰는 대신 빈 문자열을 명시해야 하는
+    필드(이메일 등)만 그렇게 다룬다.
+
     Attributes:
-        name: 표시 이름.
+        name: 표시 이름. 보내면 비어 있지 않아야 한다.
         monthly_budget_usd: 월 예산. `null` 이면 무제한.
     """
 
-    name: str | None = pydantic.Field(
-        default=None, min_length=1, max_length=128
-    )
+    name: str = pydantic.Field(default="", min_length=1, max_length=128)
     monthly_budget_usd: decimal.Decimal | None = pydantic.Field(
         default=None, ge=0
     )
@@ -226,13 +229,11 @@ class UpdateTeamRequest(_AdminBase):
     """팀 수정 요청. 규칙은 `UpdateAccountRequest` 와 같다.
 
     Attributes:
-        name: 표시 이름.
+        name: 표시 이름. 보내면 비어 있지 않아야 한다.
         monthly_budget_usd: 월 예산. `null` 이면 상위 예산만 적용.
     """
 
-    name: str | None = pydantic.Field(
-        default=None, min_length=1, max_length=128
-    )
+    name: str = pydantic.Field(default="", min_length=1, max_length=128)
     monthly_budget_usd: decimal.Decimal | None = pydantic.Field(
         default=None, ge=0
     )
@@ -241,18 +242,19 @@ class UpdateTeamRequest(_AdminBase):
 class UpdateUserRequest(_AdminBase):
     """사용자 수정 요청. 규칙은 `UpdateAccountRequest` 와 같다.
 
+    문자열 필드는 `null` 을 허용하지 않는다. 이메일과 팀은 빈 문자열로
+    비울 수 있다(팀은 빈 문자열이면 팀 없음).
+
     Attributes:
-        name: 표시 이름.
-        email: 연락용 메일.
+        name: 표시 이름. 보내면 비어 있지 않아야 한다.
+        email: 연락용 메일. 빈 문자열이면 지운다.
         team_id: 소속 팀 ID. 빈 문자열이면 팀 없음으로 만든다.
         monthly_budget_usd: 월 예산. `null` 이면 상위 예산만 적용.
     """
 
-    name: str | None = pydantic.Field(
-        default=None, min_length=1, max_length=128
-    )
-    email: str | None = None
-    team_id: str | None = None
+    name: str = pydantic.Field(default="", min_length=1, max_length=128)
+    email: str = ""
+    team_id: str = ""
     monthly_budget_usd: decimal.Decimal | None = pydantic.Field(
         default=None, ge=0
     )
@@ -262,16 +264,16 @@ class UpdateApiKeyRequest(_AdminBase):
     """API 키 수정 요청. 규칙은 `UpdateAccountRequest` 와 같다.
 
     키의 소속(계정·팀·사용자)과 해시는 바꿀 수 없다. 소속을 옮기려면 새
-    키를 발급한다.
+    키를 발급한다. 문자열·목록 필드는 `null` 을 허용하지 않는다.
 
     Attributes:
-        name: 키 용도 메모.
+        name: 키 용도 메모. 빈 문자열이면 지운다.
         allowed_models: 허용 모델 목록. 빈 목록이면 서버 기본 정책을 따른다.
         monthly_budget_usd: 키 월 예산. `null` 이면 상위 예산만 적용.
     """
 
-    name: str | None = None
-    allowed_models: list[str] | None = None
+    name: str = ""
+    allowed_models: list[str] = pydantic.Field(default_factory=list)
     monthly_budget_usd: decimal.Decimal | None = pydantic.Field(
         default=None, ge=0
     )

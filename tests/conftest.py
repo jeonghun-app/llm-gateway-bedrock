@@ -187,8 +187,15 @@ def settings() -> config.Settings:
 
 @pytest.fixture
 def registry(dynamodb: typing.Any) -> repository.RegistryRepository:
-    """레지스트리 저장소를 제공한다."""
-    return repository.RegistryRepository(dynamodb.Table(REGISTRY_TABLE))
+    """레지스트리 저장소를 제공한다.
+
+    키 재발급 트랜잭션을 위해 저수준 클라이언트도 함께 넘긴다. moto
+    컨텍스트 안에서 만들어야 하므로 `dynamodb` 픽스처에 의존한다.
+    """
+    client = boto3.client("dynamodb", region_name=TEST_REGION)
+    return repository.RegistryRepository(
+        dynamodb.Table(REGISTRY_TABLE), client=client
+    )
 
 
 @pytest.fixture
