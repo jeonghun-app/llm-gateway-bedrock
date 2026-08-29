@@ -251,6 +251,137 @@
       totals.error_requests > 0 ? t('실패 요청이 있다') : t('실패 없음');
   }
 
+
+  /**
+   * 이번 달 예산 소진 현황을 그린다.
+   *
+   * 이 제품의 핵심 가치가 비용 통제인데 화면에 예산이 없으면 소진을 사후에만
+   * 알게 된다. 소진율이 높은 항목이 위에 오도록 서버가 정렬해 보낸다.
+   *
+   * @param {?Object} budgets 예산 블록. 없으면 비운다.
+   */
+  function renderBudgets(budgets) {
+    const panel = document.getElementById('budget-panel');
+    if (!panel) {
+      return;
+    }
+    const entries = (budgets && budgets.entries) || [];
+    if (!entries.length) {
+      const empty = document.createElement('p');
+      empty.className = 'chart-empty';
+      empty.textContent = t(
+        '예산이 설정된 항목이 없다. 계정·팀·사용자·키에 월 예산을 지정하면 소진율이 여기 표시된다.'
+      );
+      panel.replaceChildren(empty);
+      return;
+    }
+
+    const grid = document.createElement('div');
+    grid.className = 'budget-grid';
+    entries.forEach(function (entry) {
+      grid.appendChild(buildBudgetCard(entry));
+    });
+    panel.replaceChildren(grid);
+  }
+
+  /**
+   * 예산 항목 카드 하나를 만든다.
+   *
+   * @param {!Object} entry 예산 항목.
+   * @returns {!HTMLElement} 카드 요소.
+   */
+  function buildBudgetCard(entry) {
+    const ratio = Number(entry.used_ratio) || 0;
+    const percent = Math.min(ratio * 100, 100);
+    // 80% 를 주의, 100% 이상을 위험으로 본다. 예산은 초과하면 요청이 거부되므로
+    // 그 전에 알아야 한다.
+    let level = 'ok';
+    if (entry.blocked || ratio >= 1) {
+      level = 'danger';
+    } else if (ratio >= 0.8) {
+      level = 'warn';
+    }
+
+    const card = document.createElement('article');
+    card.className = 'budget-card budget-' + level;
+
+    const head = document.createElement('div');
+    head.className = 'budget-head';
+    const scope = document.createElement('span');
+    scope.className = 'badge';
+    scope.textContent = t(scopeLabel(entry.scope));
+    const label = document.createElement('span');
+    label.className = 'budget-label';
+    label.textContent = entry.label || entry.entity_id;
+    label.title = entry.entity_id;
+    head.appendChild(scope);
+    head.appendChild(label);
+    card.appendChild(head);
+
+    const amount = document.createElement('p');
+    amount.className = 'budget-amount';
+    amount.textContent =
+      formatUsd(entry.used_usd) + ' / ' + formatUsd(entry.limit_usd);
+    card.appendChild(amount);
+
+    // 진행률 바. 스크린리더에는 progressbar 로 알린다.
+    const track = document.createElement('div');
+    track.className = 'budget-track';
+    track.setAttribute('role', 'progressbar');
+    track.setAttribute('aria-valuemin', '0');
+    track.setAttribute('aria-valuemax', '100');
+    track.setAttribute('aria-valuenow', String(Math.round(percent)));
+    track.setAttribute(
+      'aria-label',
+      (entry.label || entry.entity_id) + ' ' + Math.round(percent) + '%'
+    );
+    const fill = document.createElement('div');
+    fill.className = 'budget-fill';
+    fill.style.width = percent.toFixed(1) + '%';
+    track.appendChild(fill);
+    card.appendChild(track);
+
+    const note = document.createElement('p');
+    note.className = 'budget-note';
+    if (Number(entry.limit_usd) === 0) {
+      note.textContent = t('한도 0 — 즉시 차단');
+    } else if (entry.blocked) {
+      note.textContent = t('차단됨 — 이 축의 요청이 거부된다');
+    } else {
+      note.textContent = formatPercent(ratio);
+    }
+    card.appendChild(note);
+
+    if (entry.unpriced_requests > 0) {
+      const warning = document.createElement('p');
+      warning.className = 'budget-warning';
+      warning.textContent = t(
+        '단가 미등록 요청이 있어 실제 소진율은 더 높을 수 있다'
+      );
+      card.appendChild(warning);
+    }
+    return card;
+  }
+
+  /**
+   * 예산 축 이름을 사람이 읽는 라벨로 바꾼다.
+   *
+   * @param {string} scope `account`/`team`/`user`/`key`.
+   * @returns {string} 한국어 라벨(번역 대상).
+   */
+  function scopeLabel(scope) {
+    if (scope === 'team') {
+      return '팀';
+    }
+    if (scope === 'user') {
+      return '사용자';
+    }
+    if (scope === 'key') {
+      return 'API 키';
+    }
+    return '계정';
+  }
+
   /**
    * 차트 4개를 갱신한다.
    *
@@ -621,6 +752,7 @@
 
       renderKpis(dashboard.totals || {});
       renderCharts(dashboard);
+      renderBudgets(dashboard.budgets);
       renderTable();
       setStatus(
         t('갱신 완료 · ') + dashboard.window.start + ' ~ ' +
@@ -748,6 +880,7 @@
         if (lastDashboard) {
           renderCharts(lastDashboard);
           renderKpis(lastDashboard.totals || {});
+          renderBudgets(lastDashboard.budgets);
         }
         if (window.LlmgwAdmin && window.LlmgwAdmin.rerender) {
           window.LlmgwAdmin.rerender();

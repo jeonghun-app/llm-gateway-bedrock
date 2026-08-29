@@ -97,7 +97,8 @@ def test_JS의한국어리터럴이모두t로감싸져있다() -> None:
     unwrapped: list[str] = []
     for name in ("app.js", "admin.js", "charts.js"):
         source = (_STATIC / name).read_text(encoding="utf-8")
-        for line_number, line in enumerate(source.splitlines(), start=1):
+        lines = source.splitlines()
+        for index, line in enumerate(lines):
             stripped = line.lstrip()
             if stripped.startswith(("*", "//", "/*")):
                 continue
@@ -107,10 +108,19 @@ def test_JS의한국어리터럴이모두t로감싸져있다() -> None:
                     value = match.group(2)
                 if value is None or not _HANGUL.search(value):
                     continue
+                # 같은 줄에서 `t('...')` 로 감싼 경우.
                 prefix = line[max(0, match.start() - 2) : match.start()]
                 if prefix.endswith("t("):
                     continue
-                unwrapped.append(f"{name}:{line_number}: {value[:40]}")
+                # 줄바꿈된 호출: 앞 줄이 `t(` 로 끝나는 경우.
+                previous = lines[index - 1].rstrip() if index else ""
+                if previous.endswith("t("):
+                    continue
+                # `return '팀';` 처럼 번역 키를 돌려주는 함수. 호출부에서
+                # `t(scopeLabel(...))` 로 감싸므로 여기서 감쌀 필요가 없다.
+                if stripped.startswith("return "):
+                    continue
+                unwrapped.append(f"{name}:{index + 1}: {value[:40]}")
 
     # Assert
     assert not unwrapped, (
