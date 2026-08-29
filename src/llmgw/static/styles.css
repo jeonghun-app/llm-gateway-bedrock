@@ -241,7 +241,7 @@ body {
 }
 
 .sidebar-note {
-  margin: auto 0 0;
+  margin: 0;
   padding-top: 1rem;
   border-top: 1px solid var(--border);
   color: var(--text-muted);
@@ -298,6 +298,60 @@ body {
   stroke-width: 1.6;
   stroke-linecap: round;
   stroke-linejoin: round;
+}
+
+
+/* ---------------------------------------------------------------------------
+ * 언어 전환 (Flowbite button group)
+ * ------------------------------------------------------------------------ */
+
+.lang-switch {
+  display: inline-flex;
+  margin-top: auto;
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-sm);
+  overflow: hidden;
+}
+
+.lang-switch button {
+  flex: 1 1 0;
+  padding: 0.4375rem 0.625rem;
+  background: var(--surface);
+  color: var(--text-subtle);
+  border: 1px solid var(--border-strong);
+  border-right-width: 0;
+  font: inherit;
+  font-size: 0.75rem;
+  font-weight: 500;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+
+.lang-switch button:first-child {
+  border-radius: var(--radius) 0 0 var(--radius);
+}
+
+.lang-switch button:last-child {
+  border-right-width: 1px;
+  border-radius: 0 var(--radius) var(--radius) 0;
+}
+
+.lang-switch button:hover {
+  background: var(--gray-100);
+  color: var(--accent);
+}
+
+.lang-switch button[aria-pressed="true"] {
+  background: var(--btn-bg);
+  border-color: var(--btn-bg);
+  color: var(--btn-text);
+}
+
+@media (prefers-color-scheme: dark) {
+  .lang-switch button:hover {
+    background: var(--gray-700);
+  }
 }
 
 /* ---------------------------------------------------------------------------
@@ -1141,6 +1195,11 @@ code {
 
   .sidebar-note {
     display: none;
+  }
+
+  .lang-switch {
+    margin-top: 0;
+    margin-left: auto;
   }
 
   .topbar {

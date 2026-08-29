@@ -377,6 +377,24 @@ Object.defineProperty(global, 'navigator', {
 
 global.Intl = global.Intl; // 그대로 사용.
 global.window = {};
+// i18n 모듈 스텁. 하네스는 렌더링 로직만 검증하므로 번역은 원문을 그대로
+// 돌려주면 충분하다. 실제 번역 동작은 tests/test_ui_i18n.py 가 브라우저에서
+// 검증한다.
+global.window.LlmgwI18n = {
+  t: function (text) {
+    return text;
+  },
+  lang: function () {
+    return 'ko';
+  },
+  setLang: function () {
+    return false;
+  },
+  applyStatic: function () {},
+  missing: function () {
+    return [];
+  },
+};
 global.setInterval = () => 0;
 global.clearInterval = () => {};
 global.setTimeout = (fn) => {

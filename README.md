@@ -1,5 +1,7 @@
 # LLM Gateway
 
+**한국어** · [English](README.en.md)
+
 Amazon Bedrock 앞단에 놓이는 **OpenAI 호환 API 게이트웨이**다. 조직이 여러 팀과
 사용자에게 LLM 접근을 나눠줄 때 생기는 세 가지 문제를 해결한다.
 
@@ -390,6 +392,12 @@ OpenAI 스펙 중 Bedrock Converse 에 대응이 없는 필드(`presence_penalty
 
 `http://<alb-dns>/ui/` 에 접속해 관리 토큰을 입력한다. 토큰은
 `sessionStorage` 에만 저장되어 탭을 닫으면 사라진다.
+
+![한국어 대시보드](docs/images/dashboard-ko.png)
+
+화면 언어는 사이드바에서 한국어와 영어를 전환한다. 선택은 브라우저에
+저장되어 다음 방문에도 유지된다. 영어 화면은
+[English README](README.en.md#monitoring-dashboard) 에 있다.
 
 보여주는 것:
 

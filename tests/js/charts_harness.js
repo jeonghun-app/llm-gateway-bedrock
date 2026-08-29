@@ -52,6 +52,24 @@ global.document = {
 // charts.js 는 CSS 변수로 색을 읽는다. 실제 값은 검증 대상이 아니므로 고정한다.
 global.getComputedStyle = () => ({ getPropertyValue: () => '#0b5fff' });
 global.window = {};
+// i18n 모듈 스텁. 하네스는 렌더링 로직만 검증하므로 번역은 원문을 그대로
+// 돌려주면 충분하다. 실제 번역 동작은 tests/test_ui_i18n.py 가 브라우저에서
+// 검증한다.
+global.window.LlmgwI18n = {
+  t: function (text) {
+    return text;
+  },
+  lang: function () {
+    return 'ko';
+  },
+  setLang: function () {
+    return false;
+  },
+  applyStatic: function () {},
+  missing: function () {
+    return [];
+  },
+};
 
 const chartsPath = path.join(
   __dirname, '..', '..', 'src', 'llmgw', 'static', 'charts.js');

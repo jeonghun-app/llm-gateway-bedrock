@@ -15,6 +15,21 @@
 (function () {
   'use strict';
 
+  const t = window.LlmgwI18n.t;
+
+  /**
+   * 현재 언어에 맞는 BCP 47 로케일 태그를 반환한다.
+   *
+   * 시각과 숫자 표기가 언어와 어긋나면(영어 UI 에 '오후 3:26') 화면이
+   * 어색해진다.
+   *
+   * @returns {string} 로케일 태그.
+   */
+  function locale() {
+    return window.LlmgwI18n.lang() === 'en' ? 'en-US' : 'ko-KR';
+  }
+
+
   const TOKEN_STORAGE_KEY = 'llmgw.adminToken';
   const ACCOUNT_STORAGE_KEY = 'llmgw.accountId';
   const AUTO_REFRESH_MS = 30000;
@@ -120,7 +135,7 @@
     if (Number.isNaN(parsed.getTime())) {
       return value;
     }
-    return parsed.toLocaleString('ko-KR', { hour12: false });
+    return parsed.toLocaleString(locale(), { hour12: false });
   }
 
   /**
@@ -163,7 +178,7 @@
   async function apiGet(path) {
     const token = dom.token.value.trim();
     if (!token) {
-      throw new Error('관리 토큰을 입력한다.');
+      throw new Error(t('관리 토큰을 입력한다.'));
     }
     const response = await fetch(path, {
       headers: { 'X-Admin-Token': token },
@@ -199,15 +214,15 @@
       totals.requests
     );
     document.getElementById('kpi-requests-note').textContent =
-      '성공 ' + formatCount(totals.success_requests) +
-      ' · 실패 ' + formatCount(totals.error_requests);
+      t('성공 ') + formatCount(totals.success_requests) +
+      t(' · 실패 ') + formatCount(totals.error_requests);
 
     document.getElementById('kpi-tokens').textContent = formatCount(
       totals.total_tokens
     );
     document.getElementById('kpi-tokens-note').textContent =
-      '입력 ' + formatCount(totals.input_tokens) +
-      ' · 출력 ' + formatCount(totals.output_tokens);
+      t('입력 ') + formatCount(totals.input_tokens) +
+      t(' · 출력 ') + formatCount(totals.output_tokens);
 
     document.getElementById('kpi-cost').textContent = formatUsd(
       totals.cost_usd
@@ -219,7 +234,7 @@
     const unpriced = totals.unpriced_requests || 0;
     if (unpriced > 0) {
       costNote.textContent =
-        'USD — 단가 미등록 ' + formatCount(unpriced) + '건 제외됨';
+        t('USD — 단가 미등록 ') + formatCount(unpriced) + t('건 제외됨');
       costNote.setAttribute('data-warn', 'true');
     } else {
       costNote.textContent = 'USD';
@@ -233,7 +248,7 @@
     const errorRate = document.getElementById('kpi-error-rate');
     errorRate.textContent = formatPercent(totals.error_rate);
     document.getElementById('kpi-error-note').textContent =
-      totals.error_requests > 0 ? '실패 요청이 있다' : '실패 없음';
+      totals.error_requests > 0 ? t('실패 요청이 있다') : t('실패 없음');
   }
 
   /**
@@ -249,21 +264,21 @@
       }),
       series: [
         {
-          name: '비용 (USD)',
+          name: t('비용 (USD)'),
           values: series.map(function (entry) {
             return entry.cost_usd;
           }),
           format: formatUsd,
         },
         {
-          name: '요청 수',
+          name: t('요청 수'),
           values: series.map(function (entry) {
             return entry.requests;
           }),
           format: formatCount,
         },
       ],
-      ariaLabel: '일별 비용과 요청 수 추이',
+      ariaLabel: t('일별 비용과 요청 수 추이'),
     });
 
     const teams = (dashboard.breakdowns.team || []).slice(0, MAX_BAR_ROWS);
@@ -275,7 +290,7 @@
         return row.cost_usd;
       }),
       format: formatUsd,
-      ariaLabel: '팀별 비용',
+      ariaLabel: t('팀별 비용'),
     });
 
     const users = (dashboard.breakdowns.user || []).slice(0, MAX_BAR_ROWS);
@@ -287,7 +302,7 @@
         return row.cost_usd;
       }),
       format: formatUsd,
-      ariaLabel: '사용자별 비용 상위 10',
+      ariaLabel: t('사용자별 비용 상위 10'),
     });
 
     charts.donutChart(
@@ -315,7 +330,7 @@
       return row.requests;
     });
     if (tail.length) {
-      labels.push('기타 ' + tail.length + '개');
+      labels.push(t('기타 ') + tail.length + t('개'));
       values.push(
         tail.reduce(function (sum, row) {
           return sum + row.requests;
@@ -326,65 +341,74 @@
       labels: labels,
       values: values,
       format: formatCount,
-      ariaLabel: '모델별 요청 비중',
+      ariaLabel: t('모델별 요청 비중'),
     };
   }
 
   /** 상세 표의 열 정의. */
-  const TABLE_COLUMNS = {
+  /**
+   * 상세 표의 열 정의를 만든다.
+   *
+   * 상수가 아니라 함수인 이유는 열 제목이 번역 대상이기 때문이다. 모듈
+   * 로드 시점에 한 번 평가하면 언어를 바꿔도 제목이 그대로 남는다.
+   *
+   * @returns {!Object<string, !Array<!Object>>} 뷰별 열 정의.
+   */
+  function tableColumns() {
+    return {
     usage: [
-      { key: 'label', title: '이름', numeric: false },
-      { key: 'key', title: '식별자', numeric: false },
-      { key: 'requests', title: '요청', numeric: true, format: formatCount },
+      { key: 'label', title: t('이름'), numeric: false },
+      { key: 'key', title: t('식별자'), numeric: false },
+      { key: 'requests', title: t('요청'), numeric: true, format: formatCount },
       {
         key: 'input_tokens',
-        title: '입력 토큰',
+        title: t('입력 토큰'),
         numeric: true,
         format: formatCount,
       },
       {
         key: 'output_tokens',
-        title: '출력 토큰',
+        title: t('출력 토큰'),
         numeric: true,
         format: formatCount,
       },
-      { key: 'cost_usd', title: '비용', numeric: true, format: formatUsd },
+      { key: 'cost_usd', title: t('비용'), numeric: true, format: formatUsd },
       {
         key: 'avg_latency_ms',
-        title: '평균 지연',
+        title: t('평균 지연'),
         numeric: true,
         format: formatMs,
       },
       {
         key: 'error_rate',
-        title: '에러율',
+        title: t('에러율'),
         numeric: true,
         format: formatPercent,
       },
     ],
     accounts: [
-      { key: 'label', title: '계정', numeric: false },
-      { key: 'account_id', title: '계정 ID', numeric: false },
-      { key: 'status', title: '상태', numeric: false },
-      { key: 'requests', title: '요청', numeric: true, format: formatCount },
+      { key: 'label', title: t('계정'), numeric: false },
+      { key: 'account_id', title: t('계정 ID'), numeric: false },
+      { key: 'status', title: t('상태'), numeric: false },
+      { key: 'requests', title: t('요청'), numeric: true, format: formatCount },
       {
         key: 'total_tokens',
-        title: '총 토큰',
+        title: t('총 토큰'),
         numeric: true,
         format: formatCount,
       },
-      { key: 'cost_usd', title: '비용', numeric: true, format: formatUsd },
+      { key: 'cost_usd', title: t('비용'), numeric: true, format: formatUsd },
       {
         key: 'monthly_budget_usd',
-        title: '월 예산',
+        title: t('월 예산'),
         numeric: true,
         format: function (value) {
-          return value == null ? '무제한' : formatUsd(value);
+          return value == null ? t('무제한') : formatUsd(value);
         },
       },
       {
         key: 'error_rate',
-        title: '에러율',
+        title: t('에러율'),
         numeric: true,
         format: formatPercent,
       },
@@ -392,55 +416,64 @@
     requests: [
       {
         key: 'timestamp',
-        title: '시각',
+        title: t('시각'),
         numeric: false,
         format: formatTimestamp,
       },
-      { key: 'user_id', title: '사용자', numeric: false },
-      { key: 'team_id', title: '팀', numeric: false },
-      { key: 'model_id', title: '모델', numeric: false },
+      { key: 'user_id', title: t('사용자'), numeric: false },
+      { key: 'team_id', title: t('팀'), numeric: false },
+      { key: 'model_id', title: t('모델'), numeric: false },
       {
         key: 'input_tokens',
-        title: '입력',
+        title: t('입력'),
         numeric: true,
         format: formatCount,
       },
       {
         key: 'output_tokens',
-        title: '출력',
+        title: t('출력'),
         numeric: true,
         format: formatCount,
       },
-      { key: 'cost_usd', title: '비용', numeric: true, format: formatUsd },
+      { key: 'cost_usd', title: t('비용'), numeric: true, format: formatUsd },
       {
         key: 'latency_ms',
-        title: '지연',
+        title: t('지연'),
         numeric: true,
         format: formatMs,
       },
-      { key: 'status_code', title: '상태', numeric: true },
-    ],
-  };
+      { key: 'status_code', title: t('상태'), numeric: true },
+      ],
+    };
+  }
 
-  const VIEW_CAPTIONS = {
-    accounts: '계정별 사용량',
-    team: '팀별 사용량',
-    user: '사용자별 사용량',
-    model: '모델별 사용량',
-    key: 'API 키별 사용량',
-    requests: '최근 요청 (종료일 기준)',
-  };
+  /**
+   * 뷰별 표 캡션을 만든다. 번역 대상이라 함수로 둔다.
+   *
+   * @returns {!Object<string, string>} 뷰별 캡션.
+   */
+  function viewCaptions() {
+    return {
+    accounts: t('계정별 사용량'),
+    team: t('팀별 사용량'),
+    user: t('사용자별 사용량'),
+    model: t('모델별 사용량'),
+    key: t('API 키별 사용량'),
+      requests: t('최근 요청 (종료일 기준)'),
+    };
+  }
 
   /**
    * 현재 선택된 탭에 맞는 표를 그린다.
    */
   function renderTable() {
+    const allColumns = tableColumns();
     const columns =
       activeView === 'accounts'
-        ? TABLE_COLUMNS.accounts
+        ? allColumns.accounts
         : activeView === 'requests'
-          ? TABLE_COLUMNS.requests
-          : TABLE_COLUMNS.usage;
+          ? allColumns.requests
+          : allColumns.usage;
 
     let rows = [];
     if (activeView === 'accounts') {
@@ -452,7 +485,7 @@
           : (lastDashboard.breakdowns || {})[activeView] || [];
     }
 
-    dom.tableCaption.textContent = VIEW_CAPTIONS[activeView] || '상세';
+    dom.tableCaption.textContent = viewCaptions()[activeView] || t('상세');
 
     const headRow = dom.table.querySelector('thead tr');
     headRow.replaceChildren();
@@ -474,7 +507,7 @@
       emptyRow.className = 'empty-row';
       const cell = document.createElement('td');
       cell.colSpan = columns.length;
-      cell.textContent = '이 기간에 데이터가 없다.';
+      cell.textContent = t('이 기간에 데이터가 없다.');
       emptyRow.appendChild(cell);
       body.appendChild(emptyRow);
       return;
@@ -523,7 +556,7 @@
     if (!accounts.length) {
       const option = document.createElement('option');
       option.value = '';
-      option.textContent = '계정이 없다';
+      option.textContent = t('계정이 없다');
       dom.account.appendChild(option);
       return;
     }
@@ -547,13 +580,13 @@
   async function refresh() {
     const token = dom.token.value.trim();
     if (!token) {
-      setStatus('관리 토큰을 입력하고 조회를 누른다.', 'error');
+      setStatus(t('관리 토큰을 입력하고 조회를 누른다.'), 'error');
       return;
     }
     sessionStorage.setItem(TOKEN_STORAGE_KEY, token);
 
     dom.refresh.disabled = true;
-    setStatus('불러오는 중…');
+    setStatus(t('불러오는 중…'));
     try {
       await loadAccounts();
       const accountId = dom.account.value;
@@ -563,8 +596,8 @@
         renderKpis({});
         renderTable();
         setStatus(
-          '계정이 없다. scripts/seed_demo_data.py 로 데모 데이터를 넣거나 ' +
-            '관리 API로 계정을 만든다.',
+          t('계정이 없다. scripts/seed_demo_data.py 로 데모 데이터를 넣거나 ') +
+            t('관리 API로 계정을 만든다.'),
           'error'
         );
         return;
@@ -590,12 +623,12 @@
       renderCharts(dashboard);
       renderTable();
       setStatus(
-        '갱신 완료 · ' + dashboard.window.start + ' ~ ' +
-          dashboard.window.end + ' · ' + new Date().toLocaleTimeString('ko-KR'),
+        t('갱신 완료 · ') + dashboard.window.start + ' ~ ' +
+          dashboard.window.end + ' · ' + new Date().toLocaleTimeString(locale()),
         'ok'
       );
     } catch (error) {
-      setStatus('조회 실패: ' + error.message, 'error');
+      setStatus(t('조회 실패: ') + error.message, 'error');
     } finally {
       dom.refresh.disabled = false;
     }
@@ -652,6 +685,22 @@
   /**
    * 초기화한다.
    */
+
+  /**
+   * 정적 텍스트와 문서 제목, 언어 버튼 상태를 현재 언어로 맞춘다.
+   */
+  function applyLanguage() {
+    window.LlmgwI18n.applyStatic();
+    document.title = t('LLM Gateway 모니터링');
+    const current = window.LlmgwI18n.lang();
+    document.querySelectorAll('[data-lang]').forEach(function (button) {
+      button.setAttribute(
+        'aria-pressed',
+        String(button.getAttribute('data-lang') === current)
+      );
+    });
+  }
+
   function init() {
     applyQuickRange(30);
 
@@ -685,12 +734,33 @@
         });
       });
 
+
+    // 언어 전환. 정적 텍스트는 i18n 모듈이 data-i18n 으로 갱신하고, 동적으로
+    // 그려지는 표·차트·관리 화면은 다시 렌더링해 반영한다.
+    applyLanguage();
+    document.querySelectorAll('[data-lang]').forEach(function (button) {
+      button.addEventListener('click', function () {
+        if (!window.LlmgwI18n.setLang(button.getAttribute('data-lang'))) {
+          return;
+        }
+        applyLanguage();
+        renderTable();
+        if (lastDashboard) {
+          renderCharts(lastDashboard);
+          renderKpis(lastDashboard.totals || {});
+        }
+        if (window.LlmgwAdmin && window.LlmgwAdmin.rerender) {
+          window.LlmgwAdmin.rerender();
+        }
+      });
+    });
+
     renderTable();
 
     if (savedToken) {
       refresh();
     } else {
-      setStatus('관리 토큰을 입력하고 조회를 누른다.');
+      setStatus(t('관리 토큰을 입력하고 조회를 누른다.'));
     }
 
     // 관리 화면(admin.js)이 계정을 만들고 지운 직후 상단 계정 선택 목록을
@@ -703,7 +773,7 @@
           await loadAccounts();
         } catch (error) {
           // 계정 목록 갱신 실패가 관리 작업 자체를 되돌리지는 않는다.
-          setStatus('계정 목록 갱신 실패: ' + error.message, 'error');
+          setStatus(t('계정 목록 갱신 실패: ') + error.message, 'error');
         }
       },
     };
