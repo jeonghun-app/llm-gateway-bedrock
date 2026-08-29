@@ -35,10 +35,13 @@ from llmgw import apikey  # noqa: E402
 from llmgw import app  # noqa: E402
 from llmgw import auth  # noqa: E402
 from llmgw import bedrock  # noqa: E402
+from llmgw import cache as cache_module  # noqa: E402
 from llmgw import clock  # noqa: E402
 from llmgw import config  # noqa: E402
 from llmgw import domain  # noqa: E402
+from llmgw import errors  # noqa: E402
 from llmgw import observability  # noqa: E402
+from llmgw import oidc  # noqa: E402
 from llmgw import pricing  # noqa: E402
 from llmgw import repository  # noqa: E402
 from llmgw import services  # noqa: E402
@@ -285,10 +288,43 @@ def usage_recorder(
 
 
 @pytest.fixture
+def oidc_verifier(
+    registry: repository.RegistryRepository,
+    settings: config.Settings,
+    logger: observability.Logger,
+) -> oidc.OidcVerifier:
+    """외부 인증 검증기를 제공한다.
+
+    실제 검증기다. 발급자가 레지스트리에 등록되지 않으면 거부하므로 API 키
+    테스트에는 영향이 없다. JWKS 는 네트워크를 타지 않도록 대역을 넣는다.
+    """
+    return oidc.OidcVerifier(
+        registry=registry,
+        settings=settings,
+        logger=logger,
+        clock_source=clock.SYSTEM_CLOCK,
+        config_cache=cache_module.TtlCache(ttl_seconds=0),
+        jwks_factory=lambda _url: typing.cast(
+            "oidc.JwksCache", _UnusableJwks()
+        ),
+    )
+
+
+class _UnusableJwks:
+    """네트워크를 타지 않는 JWKS 대역. 서명 검증까지 가면 실패한다."""
+
+    def get_key(self, kid: str) -> typing.Any:
+        """항상 키를 찾지 못한 것으로 다룬다."""
+        del kid
+        raise errors.AuthenticationError("테스트에서 JWKS 를 쓰지 않는다.")
+
+
+@pytest.fixture
 def authenticator(
     registry: repository.RegistryRepository,
     usage_store: repository.UsageStore,
     settings: config.Settings,
+    oidc_verifier: oidc.OidcVerifier,
 ) -> auth.Authenticator:
     """인증기를 제공한다. 캐시는 비활성화해 상태 누출을 막는다."""
     from llmgw import cache
@@ -297,6 +333,8 @@ def authenticator(
         registry=registry,
         usage_store=usage_store,
         settings=settings,
+        oidc_verifier=oidc_verifier,
+        clock_source=clock.SYSTEM_CLOCK,
         metadata_cache=cache.TtlCache(ttl_seconds=0),
     )
 
@@ -545,6 +583,7 @@ def app_services(
     usage_recorder: usage.UsageRecorder,
     fake_bedrock: FakeBedrock,
     frozen_clock: FrozenClock,
+    oidc_verifier: oidc.OidcVerifier,
 ) -> services.Services:
     """실제 서비스 컨테이너를 조립한다. Bedrock 과 시계만 대역이다."""
     return services.Services(
@@ -560,6 +599,7 @@ def app_services(
         bedrock=typing.cast("bedrock.BedrockGateway", fake_bedrock),
         clock=frozen_clock,
         id_factory=SequenceIdFactory("req"),
+        oidc=oidc_verifier,
     )
 
 

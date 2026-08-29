@@ -1,34 +1,35 @@
 <!--
-PR 을 열기 전에 CONTRIBUTING.md 의 "커밋 전 전체 검증" 을 로컬에서 통과했는지
-확인한다. 아래 항목을 채운다.
+Before opening this PR, make sure the "Full verification before committing" steps
+in CONTRIBUTING.md pass locally. Fill in the sections below.
 -->
 
-## 요약
+## Summary
 
-<!-- 무엇을 바꿨는지 한두 문장으로. -->
+<!-- What changed, in one or two sentences. -->
 
-## 변경 이유
+## Why
 
-<!-- 왜 이 변경이 필요한가. 관련 이슈가 있으면 참조한다. 예: Closes #123 -->
+<!-- Why this change is needed. Reference the related issue if there is one,
+     for example: Closes #123 -->
 
-## 변경 내용
+## Changes
 
-<!-- 주요 변경을 항목으로. -->
+<!-- The main changes, as a list. -->
 
 -
 
-## 테스트 방법
+## How this was tested
 
-<!-- 어떻게 검증했는지. 새로 추가/수정한 테스트를 적는다. -->
+<!-- How you verified the change. Note any tests you added or modified. -->
 
-## 체크리스트
+## Checklist
 
-- [ ] `black`·`isort`·`ruff`·`mypy` 를 통과했다.
-- [ ] `pytest -m "not browser"` 가 통과하고 커버리지 하한(85%)을 지킨다.
-- [ ] UI 를 바꿨다면 `pytest -m browser` 를 통과했다.
-- [ ] IaC 를 바꿨다면 `cfn-lint infra/*.yaml` 을 통과했다.
-- [ ] 셸 스크립트를 바꿨다면 `shellcheck scripts/*.sh` 를 통과했다.
-- [ ] API 스키마를 바꿨다면 `scripts/export_openapi.py` 로 스펙을 갱신했다.
-- [ ] 런타임 의존성을 바꿨다면 `lock_requirements.sh` 로 lock 을 재생성했다.
-- [ ] 사용자에게 보이는 변경이면 `CHANGELOG.md` 에 항목을 추가했다.
-- [ ] 로그·코드·문서에 자격증명이나 토큰을 남기지 않았다.
+- [ ] `black`, `isort`, `ruff`, and `mypy` pass.
+- [ ] `pytest -m "not browser"` passes and coverage stays at or above the 85% floor.
+- [ ] If the UI changed, `pytest -m browser` passes.
+- [ ] If the IaC changed, `cfn-lint infra/*.yaml` passes.
+- [ ] If shell scripts changed, `shellcheck scripts/*.sh` passes.
+- [ ] If the API schema changed, the spec was regenerated with `scripts/export_openapi.py`.
+- [ ] If runtime dependencies changed, the lock file was regenerated with `lock_requirements.sh`.
+- [ ] If the change is user visible, an entry was added to `CHANGELOG.md`.
+- [ ] No credentials or tokens are left in logs, code, or documentation.

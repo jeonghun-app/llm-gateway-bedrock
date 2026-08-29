@@ -17,7 +17,9 @@ import secrets
 
 # OpenAI 클라이언트 SDK 중 일부가 `sk-` 접두어를 검증한다. 호환성을 위해
 # 같은 접두어를 쓰고 뒤에 게이트웨이 식별자를 붙인다.
-_KEY_PREFIX = "sk-llmgw"
+# 인증 분기에서 API 키와 OIDC 토큰을 구분하는 데 쓰이므로 공개한다.
+KEY_PREFIX = "sk-llmgw"
+_KEY_PREFIX = KEY_PREFIX
 
 # 난수 바이트 길이. token_urlsafe(32) 는 43자 URL-safe 문자열을 만든다.
 _SECRET_BYTES = 32

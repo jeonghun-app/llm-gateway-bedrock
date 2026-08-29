@@ -277,3 +277,55 @@ class UpdateApiKeyRequest(_AdminBase):
     monthly_budget_usd: decimal.Decimal | None = pydantic.Field(
         default=None, ge=0
     )
+
+
+class PutAuthConfigRequest(_AdminBase):
+    """계정 외부 인증(OIDC) 설정 요청.
+
+    고객이 이미 쓰는 인증 서버를 계정에 붙인다. 발급자는 계정 간에 겹칠 수
+    없다. 발급자로 토큰이 어느 계정 것인지 판별하기 때문이다.
+
+    Attributes:
+        issuer: OIDC 발급자 URL. 토큰의 `iss` 와 정확히 일치해야 한다.
+        jwks_url: JWKS 문서 URL. 생략하면 발급자에서 표준 경로를 만든다.
+            https 여야 하고 내부 네트워크 주소는 거부된다.
+        audience: 허용 클라이언트 ID. 쉼표로 구분한다. 생략하면 청중을
+            검사하지 않는다.
+        user_claim: 사용자 ID 로 쓸 클레임 이름.
+        team_claim: 팀 ID 로 쓸 클레임 이름. 생략하면 팀 없이 동작한다.
+        groups_claim: 그룹 목록 클레임 이름. Cognito 는 `cognito:groups` 다.
+        admin_groups: 이 계정의 관리자로 인정할 그룹. 쉼표로 구분한다.
+        auto_provision: 사용자가 없을 때 자동 생성할지 여부. 켜면 예산을
+            반드시 지정해야 한다.
+        provision_allowed_models: 자동 생성 사용자의 허용 모델. 쉼표 구분.
+        provision_budget_usd: 자동 생성 사용자의 월 예산.
+    """
+
+    issuer: str = pydantic.Field(min_length=8, max_length=512)
+    jwks_url: str = pydantic.Field(default="", max_length=512)
+    audience: str = pydantic.Field(default="", max_length=512)
+    user_claim: str = pydantic.Field(default="email", max_length=64)
+    team_claim: str = pydantic.Field(default="", max_length=64)
+    groups_claim: str = pydantic.Field(default="cognito:groups", max_length=64)
+    admin_groups: str = pydantic.Field(default="", max_length=512)
+    auto_provision: bool = False
+    provision_allowed_models: str = pydantic.Field(default="", max_length=1024)
+    provision_budget_usd: decimal.Decimal | None = pydantic.Field(
+        default=None, ge=0
+    )
+
+
+class SelfIssueKeyRequest(_AdminBase):
+    """셀프서비스 키 발급 요청.
+
+    계정·사용자는 토큰에서 결정하므로 본문으로 받지 않는다. 받으면 다른
+    사용자에게 키를 발급하는 경로가 열린다.
+
+    Attributes:
+        name: 키 표시 이름. 어디에 쓰는 키인지 구분하는 용도다.
+        allowed_models: 이 키로 호출할 수 있는 모델. 생략하면 계정 설정의
+            기본값을 따른다. 계정이 정한 범위를 넘길 수는 없다.
+    """
+
+    name: str = pydantic.Field(min_length=1, max_length=128)
+    allowed_models: list[str] = pydantic.Field(default_factory=list)

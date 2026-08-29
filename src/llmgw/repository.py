@@ -10,14 +10,19 @@ boto3 호출은 이 모듈과 `bedrock` 모듈에만 존재한다. 상위 계층
     ACCOUNT#<aid>  META            계정. gsi1pk=ACCOUNTS 로 전체 목록 조회
     ACCOUNT#<aid>  TEAM#<tid>      팀
     ACCOUNT#<aid>  USER#<uid>      사용자
+    ACCOUNT#<aid>  AUTH            계정별 외부 인증(OIDC) 설정
     KEY#<hash>     META            API 키. gsi1pk=ACCOUNT#<aid> 로 계정별 조회
+    OIDC#<issuer>  META            발급자 -> 계정 역인덱스. 토큰의 iss 로
+                                   어느 계정 설정인지 한 번에 찾는다.
 
 `usage` (pk, sk) + LSI `lsi_ts`(pk, ts)
 
-    pk = <aid>#<YYYY-MM-DD>, sk = <request_id>
+    pk = <aid>#<YYYY-MM-DD>, sk = <usage_id>
 
-    sk 를 요청 ID 로 잡은 것이 멱등성의 핵심이다. 같은 요청을 두 번
-    기록하려 하면 조건부 쓰기가 실패한다. 시간순 조회는 LSI 로 한다.
+    sk 는 서버가 요청마다 만드는 `usage_id` 다. 클라이언트가 지정할 수 있는
+    `X-Request-Id` 를 키로 쓰면 같은 값을 계속 보내는 것만으로 집계가 멈추고
+    예산 검사가 영원히 통과한다. 재전송 보호는 `ClientRequestToken` 이
+    담당한다. 시간순 조회는 LSI 로 한다.
 
 `usage-agg` (pk, sk)
 
@@ -56,6 +61,8 @@ _ACCOUNTS_INDEX_PARTITION = "ACCOUNTS"
 _GSI1_NAME = "gsi1"
 _TS_INDEX_NAME = "lsi_ts"
 _META_SORT_KEY = "META"
+# 계정별 외부 인증(OIDC) 설정의 정렬 키.
+_AUTH_SORT_KEY = "AUTH"
 
 _SECONDS_PER_DAY = 86400
 
@@ -78,6 +85,21 @@ def account_pk(account_id: str) -> str:
 def key_pk(key_hash: str) -> str:
     """API 키 파티션 키를 만든다."""
     return f"KEY#{key_hash}"
+
+
+def issuer_pk(issuer: str) -> str:
+    """OIDC 발급자 역인덱스의 파티션 키를 만든다.
+
+    토큰의 `iss` 로 어느 계정 설정인지 한 번의 GetItem 으로 찾기 위한
+    포인터 아이템이다.
+
+    Args:
+        issuer: OIDC 발급자 URL.
+
+    Returns:
+        `OIDC#<issuer>` 형태의 파티션 키.
+    """
+    return f"OIDC#{issuer}"
 
 
 def team_sk(team_id: str) -> str:
@@ -385,6 +407,199 @@ class RegistryRepository:
             }
         )
         self._put(item, overwrite=overwrite, label="team")
+
+    # -- 외부 인증(OIDC) 설정 ------------------------------------------------
+
+    def put_auth_config(
+        self, config: domain.AccountAuthConfig, *, overwrite: bool = False
+    ) -> None:
+        """계정의 OIDC 설정을 저장한다.
+
+        설정 본문과 발급자 역인덱스를 하나의 트랜잭션으로 쓴다. 두 쓰기를
+        나누면 발급자만 등록되고 설정이 없는 상태(또는 그 반대)가 남아,
+        토큰이 계정으로 라우팅됐는데 설정을 읽을 수 없는 경로가 생긴다.
+
+        발급자 역인덱스에는 `attribute_not_exists` 조건을 걸어 다른 계정이
+        이미 쓰는 발급자를 가로채지 못하게 한다.
+
+        Args:
+            config: 저장할 설정.
+            overwrite: `True` 면 같은 계정의 기존 설정을 갱신한다.
+
+        Raises:
+            ResourceConflictError: 발급자가 다른 계정에 이미 등록된 경우,
+                또는 중복 생성인 경우.
+        """
+        body = _strip_none(
+            {
+                "pk": account_pk(config.account_id),
+                "sk": _AUTH_SORT_KEY,
+                "entity": "auth_config",
+                "account_id": config.account_id,
+                "issuer": config.issuer,
+                "jwks_url": config.jwks_url,
+                "audience": config.audience,
+                "user_claim": config.user_claim,
+                "team_claim": config.team_claim,
+                "groups_claim": config.groups_claim,
+                "admin_groups": config.admin_groups,
+                "auto_provision": config.auto_provision,
+                "provision_allowed_models": config.provision_allowed_models,
+                "provision_budget_usd": config.provision_budget_usd,
+                "status": config.status.value,
+                "created_at": config.created_at,
+                "updated_at": config.updated_at,
+            }
+        )
+        pointer = {
+            "pk": issuer_pk(config.issuer),
+            "sk": _META_SORT_KEY,
+            "entity": "auth_issuer",
+            "issuer": config.issuer,
+            "account_id": config.account_id,
+        }
+        # 역인덱스는 같은 계정이 다시 저장하는 경우에만 덮어쓰기를 허용한다.
+        pointer_condition = (
+            "attribute_not_exists(pk) OR account_id = :account_id"
+        )
+        transact_items: list[_LowLevelItem] = [
+            {
+                "Put": {
+                    "TableName": self._table_name,
+                    "Item": {
+                        name: _serialize(value) for name, value in body.items()
+                    },
+                    "ConditionExpression": (
+                        "attribute_exists(pk)"
+                        if overwrite
+                        else "attribute_not_exists(sk)"
+                    ),
+                }
+            },
+            {
+                "Put": {
+                    "TableName": self._table_name,
+                    "Item": {
+                        name: _serialize(value)
+                        for name, value in pointer.items()
+                    },
+                    "ConditionExpression": pointer_condition,
+                    "ExpressionAttributeValues": {
+                        ":account_id": _serialize(config.account_id)
+                    },
+                }
+            },
+        ]
+        try:
+            self._client.transact_write_items(TransactItems=transact_items)
+        except botocore.exceptions.ClientError as exc:
+            codes = [
+                str(reason.get("Code") or "")
+                for reason in (exc.response.get("CancellationReasons") or [])
+            ]
+            if len(codes) > 1 and codes[1] == "ConditionalCheckFailed":
+                raise errors.ResourceConflictError(
+                    "이 발급자는 다른 계정에 이미 등록돼 있다:"
+                    f" {config.issuer}"
+                ) from exc
+            if codes and codes[0] == "ConditionalCheckFailed":
+                if overwrite:
+                    raise errors.ResourceNotFoundError(
+                        "갱신할 인증 설정이 없다."
+                    ) from exc
+                raise errors.ResourceConflictError(
+                    "이 계정에는 인증 설정이 이미 있다."
+                ) from exc
+            raise
+
+    def get_auth_config(
+        self, account_id: str
+    ) -> domain.AccountAuthConfig | None:
+        """계정의 OIDC 설정을 조회한다.
+
+        Args:
+            account_id: 계정 ID.
+
+        Returns:
+            찾은 설정. 없으면 `None`.
+        """
+        item = self._get(account_pk(account_id), _AUTH_SORT_KEY)
+        return None if item is None else self._to_auth_config(item)
+
+    def find_account_by_issuer(self, issuer: str) -> str:
+        """발급자로 계정 ID 를 찾는다.
+
+        Args:
+            issuer: 토큰의 `iss` 값.
+
+        Returns:
+            매핑된 계정 ID. 등록되지 않은 발급자면 빈 문자열.
+        """
+        if not issuer:
+            return ""
+        item = self._get(issuer_pk(issuer), _META_SORT_KEY)
+        if item is None:
+            return ""
+        return str(item.get("account_id") or "")
+
+    def delete_auth_config(self, account_id: str) -> None:
+        """계정의 OIDC 설정과 발급자 역인덱스를 함께 삭제한다.
+
+        Args:
+            account_id: 계정 ID.
+
+        Raises:
+            ResourceNotFoundError: 설정이 없는 경우.
+        """
+        existing = self.get_auth_config(account_id)
+        if existing is None:
+            raise errors.ResourceNotFoundError("삭제할 인증 설정이 없다.")
+        self._client.transact_write_items(
+            TransactItems=[
+                {
+                    "Delete": {
+                        "TableName": self._table_name,
+                        "Key": {
+                            "pk": _serialize(account_pk(account_id)),
+                            "sk": _serialize(_AUTH_SORT_KEY),
+                        },
+                    }
+                },
+                {
+                    "Delete": {
+                        "TableName": self._table_name,
+                        "Key": {
+                            "pk": _serialize(issuer_pk(existing.issuer)),
+                            "sk": _serialize(_META_SORT_KEY),
+                        },
+                    }
+                },
+            ]
+        )
+
+    @staticmethod
+    def _to_auth_config(item: _JsonDict) -> domain.AccountAuthConfig:
+        """아이템을 인증 설정 도메인 객체로 변환한다."""
+        return domain.AccountAuthConfig(
+            account_id=str(item["account_id"]),
+            issuer=str(item["issuer"]),
+            jwks_url=str(item.get("jwks_url", "")),
+            audience=str(item.get("audience", "")),
+            user_claim=str(item.get("user_claim", "email")),
+            team_claim=str(item.get("team_claim", "")),
+            groups_claim=str(item.get("groups_claim", "cognito:groups")),
+            admin_groups=str(item.get("admin_groups", "")),
+            auto_provision=bool(item.get("auto_provision", False)),
+            provision_allowed_models=str(
+                item.get("provision_allowed_models", "")
+            ),
+            provision_budget_usd=_optional_decimal(
+                item.get("provision_budget_usd")
+            ),
+            status=domain.EntityStatus(item.get("status", "active")),
+            created_at=str(item.get("created_at", "")),
+            updated_at=str(item.get("updated_at", "")),
+        )
 
     def get_team(self, account_id: str, team_id: str) -> domain.Team | None:
         """팀을 조회한다.
@@ -783,7 +998,8 @@ class RegistryRepository:
 
         Raises:
             ResourceNotFoundError: 계정이 없는 경우.
-            ResourceConflictError: 하위 팀·사용자·키가 남아 있는 경우.
+            ResourceConflictError: 하위 팀·사용자·키 또는 인증 설정이 남아
+                있는 경우.
         """
         if self.get_account(account_id) is None:
             raise errors.ResourceNotFoundError(
@@ -800,6 +1016,14 @@ class RegistryRepository:
         if self.list_api_keys(account_id):
             raise errors.ResourceConflictError(
                 f"API 키가 남아 있어 계정을 삭제할 수 없다: {account_id}"
+            )
+        # 인증 설정을 남긴 채 계정을 지우면 발급자 역인덱스가 고아로 남아
+        # 다른 계정이 그 발급자를 등록할 수 없게 된다. 다른 하위 리소스와
+        # 같은 정책으로 거부해, 조용한 데이터 유실 대신 명시적 삭제를
+        # 요구한다.
+        if self.get_auth_config(account_id) is not None:
+            raise errors.ResourceConflictError(
+                "인증 설정이 남아 있어 계정을 삭제할 수 없다:" f" {account_id}"
             )
         self._conditional_delete(
             partition=account_pk(account_id),

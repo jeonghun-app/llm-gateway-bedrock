@@ -1108,6 +1108,275 @@
 
   // -- 라우팅 ---------------------------------------------------------------
 
+
+  /**
+   * 계정별 외부 인증(OIDC) 연동 화면을 그린다.
+   *
+   * 고객이 이미 쓰는 인증 서버(Amazon Cognito, Okta, Azure AD, Google)를
+   * 계정에 붙인다. 붙이면 그 계정 사용자는 API 키 없이 IdP 토큰으로 호출할
+   * 수 있고, 관리자 그룹에 속한 사람은 공유 관리 토큰 없이 자기 계정을
+   * 관리할 수 있다.
+   *
+   * @returns {!Promise<void>}
+   */
+  async function renderAuthConfig() {
+    const accountId = requireAccountId();
+    const base = '/admin/accounts/' + encodeURIComponent(accountId);
+    const config = await api('GET', base + '/auth');
+    const configured = config.configured === true;
+
+    const container = document.createElement('div');
+
+    const hint = document.createElement('p');
+    hint.className = 'manage-hint';
+    hint.textContent =
+      '인증 서버를 연결하면 이 계정 사용자는 API 키 없이 IdP 액세스 토큰으로' +
+      ' 호출할 수 있다. 관리자 그룹에 속한 사람은 공유 관리 토큰 없이 이' +
+      ' 계정을 관리한다. 발급자는 계정 간에 겹칠 수 없다.';
+    container.appendChild(hint);
+
+    const toolbar = document.createElement('div');
+    toolbar.className = 'manage-toolbar';
+
+    const editButton = document.createElement('button');
+    editButton.type = 'button';
+    editButton.className = 'primary';
+    editButton.textContent = configured ? '설정 수정' : '인증 서버 연결';
+    editButton.addEventListener('click', function () {
+      openAuthConfigForm(accountId, base, configured ? config : null);
+    });
+    toolbar.appendChild(editButton);
+
+    if (configured) {
+      const toggle = document.createElement('button');
+      toggle.type = 'button';
+      const disabling = config.status === 'active';
+      toggle.textContent = disabling ? '즉시 차단' : '다시 허용';
+      toggle.addEventListener('click', async function () {
+        try {
+          await api('POST', base + '/auth/status', {
+            status: disabling ? 'disabled' : 'active',
+          });
+          setStatus(
+            disabling ? '외부 인증을 차단했다.' : '외부 인증을 허용했다.',
+            'ok'
+          );
+          renderManage();
+        } catch (error) {
+          setStatus('상태 변경 실패: ' + error.message, 'error');
+        }
+      });
+      toolbar.appendChild(toggle);
+
+      const remove = document.createElement('button');
+      remove.type = 'button';
+      remove.textContent = '연결 해제';
+      remove.addEventListener('click', function () {
+        openConfirm(
+          '이 계정의 외부 인증 설정을 삭제한다. 발급자 등록도 함께 사라져' +
+            ' 다른 계정이 같은 발급자를 쓸 수 있게 된다. IdP 토큰으로' +
+            ' 호출하던 사용자는 즉시 차단된다.',
+          async function () {
+            await api('DELETE', base + '/auth');
+            setStatus('외부 인증 설정을 삭제했다.', 'ok');
+            renderManage();
+          },
+          { confirmLabel: '연결 해제', confirmKind: 'danger' }
+        );
+      });
+      toolbar.appendChild(remove);
+    }
+    container.appendChild(toolbar);
+
+    if (!configured) {
+      const empty = document.createElement('p');
+      empty.className = 'chart-empty';
+      empty.textContent =
+        '아직 연결된 인증 서버가 없다. 이 계정은 API 키로만 호출할 수 있다.';
+      container.appendChild(empty);
+      dom.managePanel.replaceChildren(container);
+      return;
+    }
+
+    const rows = [
+      ['상태', statusBadge(config.status)],
+      ['발급자 (iss)', codeCell(config.issuer)],
+      ['JWKS URL', codeCell(config.effective_jwks_url)],
+      ['허용 클라이언트 (aud)', textCell(config.audience || '(검사 안 함)')],
+      ['사용자 클레임', codeCell(config.user_claim)],
+      ['팀 클레임', codeCell(config.team_claim || '(사용 안 함)')],
+      ['그룹 클레임', codeCell(config.groups_claim)],
+      [
+        '계정 관리자 그룹',
+        textCell(config.admin_groups || '(없음 — 관리 토큰만 사용)'),
+      ],
+      [
+        '미등록 사용자 자동 생성',
+        textCell(config.auto_provision ? '켜짐' : '꺼짐'),
+      ],
+      [
+        '자동 생성 허용 모델',
+        textCell(config.provision_allowed_models || '(제한 없음)'),
+      ],
+      [
+        '자동 생성 월 예산',
+        textCell(
+          config.provision_budget_usd === null
+            ? '(미설정)'
+            : '$' + config.provision_budget_usd
+        ),
+      ],
+      ['수정 시각', textCell(config.updated_at || '-')],
+    ];
+    container.appendChild(buildTable(['항목', '값'], rows));
+    dom.managePanel.replaceChildren(container);
+  }
+
+  /**
+   * 값을 담은 표 셀을 만든다.
+   *
+   * @param {string} value 표시할 값.
+   * @returns {!HTMLElement} 셀 내용.
+   */
+  function textCell(value) {
+    const span = document.createElement('span');
+    span.textContent = value;
+    return span;
+  }
+
+  /**
+   * 식별자를 코드 스타일로 표시하는 셀을 만든다.
+   *
+   * @param {string} value 표시할 값.
+   * @returns {!HTMLElement} 셀 내용.
+   */
+  function codeCell(value) {
+    const code = document.createElement('code');
+    code.textContent = value || '-';
+    return code;
+  }
+
+  /**
+   * 상태 배지를 만든다.
+   *
+   * @param {string} status `active` 또는 `disabled`.
+   * @returns {!HTMLElement} 배지 요소.
+   */
+  function statusBadge(status) {
+    const badge = document.createElement('span');
+    badge.className =
+      'badge ' + (status === 'active' ? 'badge-ok' : 'badge-error');
+    badge.textContent = status === 'active' ? '활성' : '차단됨';
+    return badge;
+  }
+
+  /**
+   * 인증 설정 입력 폼을 연다.
+   *
+   * @param {string} accountId 계정 ID.
+   * @param {string} base 계정 API 기준 경로.
+   * @param {?Object} current 기존 설정. 신규면 `null`.
+   */
+  function openAuthConfigForm(accountId, base, current) {
+    const existing = current || {};
+    openFormModal(
+      (current ? '인증 설정 수정' : '인증 서버 연결') + ' (' + accountId + ')',
+      [
+        {
+          name: 'issuer',
+          label: '발급자 URL (iss)',
+          value: existing.issuer || '',
+          placeholder:
+            'https://cognito-idp.<리전>.amazonaws.com/<유저풀ID>',
+          hint: '토큰의 iss 와 정확히 일치해야 한다. 계정 간 중복 불가.',
+        },
+        {
+          name: 'jwks_url',
+          label: 'JWKS URL (선택)',
+          value: existing.jwks_url || '',
+          hint:
+            '비우면 발급자 + /.well-known/jwks.json 을 쓴다. https 만' +
+            ' 허용하며 내부 네트워크 주소는 거부된다.',
+        },
+        {
+          name: 'audience',
+          label: '허용 클라이언트 ID (선택)',
+          value: existing.audience || '',
+          hint: '쉼표로 구분. 비우면 청중을 검사하지 않는다.',
+        },
+        {
+          name: 'user_claim',
+          label: '사용자 클레임',
+          value: existing.user_claim || 'email',
+          hint: '사용자 ID 로 쓸 클레임. Cognito 는 보통 email 이다.',
+        },
+        {
+          name: 'team_claim',
+          label: '팀 클레임 (선택)',
+          value: existing.team_claim || '',
+          hint: '예: custom:team_id. 비우면 팀 없이 동작한다.',
+        },
+        {
+          name: 'groups_claim',
+          label: '그룹 클레임',
+          value: existing.groups_claim || 'cognito:groups',
+        },
+        {
+          name: 'admin_groups',
+          label: '계정 관리자 그룹 (선택)',
+          value: existing.admin_groups || '',
+          hint:
+            '이 그룹에 속한 사람은 관리 토큰 없이 이 계정을 관리한다.' +
+            ' 쉼표로 구분.',
+        },
+        {
+          name: 'auto_provision',
+          label: '미등록 사용자 자동 생성 (yes/no)',
+          value: existing.auto_provision ? 'yes' : 'no',
+          hint:
+            'yes 로 하면 IdP 에 로그인한 사람이 곧 사용자가 된다. 이때' +
+            ' 월 예산을 반드시 지정해야 한다.',
+        },
+        {
+          name: 'provision_allowed_models',
+          label: '자동 생성 허용 모델 (선택)',
+          value: existing.provision_allowed_models || '',
+          hint: '쉼표로 구분. 비우면 서버 기본값을 따른다.',
+        },
+        {
+          name: 'provision_budget_usd',
+          label: '자동 생성 월 예산 (USD)',
+          type: 'number',
+          step: '0.01',
+          value:
+            existing.provision_budget_usd === null ||
+            existing.provision_budget_usd === undefined
+              ? ''
+              : existing.provision_budget_usd,
+          hint: '자동 생성을 켜면 필수다.',
+        },
+      ],
+      async function (values) {
+        const autoProvision =
+          values.auto_provision.trim().toLowerCase() === 'yes';
+        await api('PUT', base + '/auth', {
+          issuer: values.issuer.trim(),
+          jwks_url: values.jwks_url.trim(),
+          audience: values.audience.trim(),
+          user_claim: values.user_claim.trim() || 'email',
+          team_claim: values.team_claim.trim(),
+          groups_claim: values.groups_claim.trim() || 'cognito:groups',
+          admin_groups: values.admin_groups.trim(),
+          auto_provision: autoProvision,
+          provision_allowed_models: values.provision_allowed_models.trim(),
+          provision_budget_usd: parseBudget(values.provision_budget_usd),
+        });
+        setStatus('외부 인증 설정을 저장했다.', 'ok');
+        renderManage();
+      }
+    );
+  }
+
   /**
    * 현재 선택된 관리 뷰를 그린다.
    *
@@ -1127,6 +1396,8 @@
         await renderTeams();
       } else if (activeManageView === 'users') {
         await renderUsers();
+      } else if (activeManageView === 'auth') {
+        await renderAuthConfig();
       } else {
         await renderKeys();
       }
