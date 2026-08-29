@@ -22,6 +22,7 @@ from llmgw import clock as clock_module
 from llmgw import config
 from llmgw import errors
 from llmgw import observability
+from llmgw import oidc as oidc_module
 from llmgw import pricing as pricing_module
 from llmgw import repository
 from llmgw import usage as usage_module
@@ -46,6 +47,7 @@ class Services:
         bedrock: Bedrock 어댑터.
         clock: 시각 제공자.
         id_factory: 식별자 생성기.
+        oidc: 외부 인증 토큰 검증기.
     """
 
     settings: config.Settings
@@ -60,6 +62,7 @@ class Services:
     bedrock: bedrock_module.BedrockGateway
     clock: clock_module.Clock
     id_factory: clock_module.IdFactory
+    oidc: oidc_module.OidcVerifier
 
 
 def build_services(settings: config.Settings) -> Services:
@@ -98,6 +101,13 @@ def build_services(settings: config.Settings) -> Services:
         usage_ttl_days=settings.usage_ttl_days,
     )
 
+    oidc_verifier = oidc_module.OidcVerifier(
+        registry=registry,
+        settings=settings,
+        logger=logger,
+        clock_source=clock_module.SYSTEM_CLOCK,
+    )
+
     pricing_table = pricing_module.PricingTable.from_file(settings.pricing_file)
     control_client, runtime_client = bedrock_module.create_clients(
         region=settings.effective_bedrock_region,
@@ -127,6 +137,8 @@ def build_services(settings: config.Settings) -> Services:
             registry=registry,
             usage_store=usage_store,
             settings=settings,
+            oidc_verifier=oidc_verifier,
+            clock_source=clock_module.SYSTEM_CLOCK,
         ),
         recorder=usage_module.UsageRecorder(
             usage_store=usage_store,
@@ -146,6 +158,7 @@ def build_services(settings: config.Settings) -> Services:
         ),
         clock=clock_module.SYSTEM_CLOCK,
         id_factory=clock_module.UUID_ID_FACTORY,
+        oidc=oidc_verifier,
     )
 
 

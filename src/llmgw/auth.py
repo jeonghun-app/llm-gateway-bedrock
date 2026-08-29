@@ -25,6 +25,7 @@ from llmgw import clock
 from llmgw import config
 from llmgw import domain
 from llmgw import errors
+from llmgw import oidc
 from llmgw import pricing
 from llmgw import repository
 
@@ -53,6 +54,8 @@ class Authenticator:
         usage_store: repository.UsageStore,
         settings: config.Settings,
         metadata_cache: cache.TtlCache[typing.Any] | None = None,
+        oidc_verifier: oidc.OidcVerifier | None = None,
+        clock_source: clock.Clock | None = None,
     ) -> None:
         """인증기를 만든다.
 
@@ -62,10 +65,15 @@ class Authenticator:
             settings: 런타임 설정.
             metadata_cache: 계정·팀·사용자 캐시. 생략하면 기본 TTL 캐시를
                 만든다.
+            oidc_verifier: 외부 인증 토큰 검증기. `None` 이면 JWT 자격증명을
+                받지 않는다(미구성을 통과로 해석하지 않는다).
+            clock_source: 시각 제공자. 사용자 자동 생성 시각에 쓴다.
         """
         self._registry = registry
         self._usage_store = usage_store
         self._settings = settings
+        self._oidc = oidc_verifier
+        self._clock = clock_source or clock.SYSTEM_CLOCK
         self._cache: cache.TtlCache[typing.Any] = (
             metadata_cache or cache.TtlCache()
         )
@@ -73,17 +81,35 @@ class Authenticator:
     def authenticate(self, authorization: str | None) -> domain.Principal:
         """`Authorization` 헤더를 검증해 호출 주체를 만든다.
 
+        자격증명은 두 형태를 받는다. 접두어로 구분한다.
+
+        - `sk-llmgw-...`: 게이트웨이가 발급한 API 키.
+        - 그 외: 고객 IdP 가 발급한 OIDC 액세스 토큰. 발급자로 계정을 찾아
+          그 계정에 등록된 설정으로 검증한다.
+
+        어느 쪽이든 실패 메시지는 같다. "API 키 형식은 맞는데 값이 틀렸다"
+        와 "JWT 서명이 틀렸다" 를 구분해 알려주면 유효한 자격증명을 찾는
+        단서가 된다.
+
         Args:
-            authorization: `Bearer <api-key>` 형태의 헤더 값.
+            authorization: `Bearer <credential>` 형태의 헤더 값.
 
         Returns:
             인증된 `Principal`.
 
         Raises:
-            AuthenticationError: 헤더가 없거나 형식이 틀렸거나, 키를 찾을 수
-                없거나, 키·계정·팀·사용자 중 하나가 비활성인 경우.
+            AuthenticationError: 헤더가 없거나 형식이 틀렸거나, 자격증명이
+                유효하지 않거나, 관련 엔티티가 비활성인 경우.
+            PermissionDeniedError: 토큰은 유효하지만 사용자가 등록되지 않아
+                호출을 허용할 수 없는 경우.
         """
-        plaintext = self._extract_bearer(authorization)
+        credential = self._extract_bearer(authorization)
+        if credential.startswith(apikey.KEY_PREFIX):
+            return self._authenticate_api_key(credential)
+        return self._authenticate_oidc(credential)
+
+    def _authenticate_api_key(self, plaintext: str) -> domain.Principal:
+        """API 키로 호출 주체를 만든다."""
         api_key = self._registry.get_api_key_by_hash(
             apikey.hash_api_key(plaintext)
         )
@@ -135,6 +161,116 @@ class Authenticator:
             user_budget_usd=user.monthly_budget_usd if user else None,
             key_budget_usd=api_key.monthly_budget_usd,
         )
+
+    def _authenticate_oidc(self, token: str) -> domain.Principal:
+        """OIDC 액세스 토큰으로 호출 주체를 만든다.
+
+        키 없이 IdP 토큰만으로 호출하는 경로다. 계정·팀·사용자 예산은 API 키
+        경로와 동일하게 적용된다. 키 단위 예산은 키가 없으므로 없다.
+
+        Args:
+            token: 검증할 JWT.
+
+        Returns:
+            인증된 `Principal`.
+
+        Raises:
+            AuthenticationError: 외부 인증이 구성되지 않았거나 토큰이 유효
+                하지 않은 경우.
+            PermissionDeniedError: 사용자가 등록되지 않았고 자동 생성도 꺼져
+                있는 경우.
+        """
+        if self._oidc is None:
+            # 미구성을 통과로 해석하면 아무 IdP 의 토큰이나 받게 된다.
+            raise errors.AuthenticationError(
+                "자격증명이 유효하지 않거나 비활성 상태다."
+            )
+        identity = self._oidc.verify(token)
+
+        account = self._load_account(identity.account_id)
+        if account is None or account.status is not domain.EntityStatus.ACTIVE:
+            raise errors.AuthenticationError(
+                "자격증명이 유효하지 않거나 비활성 상태다."
+            )
+
+        team: domain.Team | None = None
+        if identity.team_id:
+            team = self._load_team(identity.account_id, identity.team_id)
+            if team is None or team.status is not domain.EntityStatus.ACTIVE:
+                raise errors.PermissionDeniedError(
+                    "토큰이 가리키는 팀이 없거나 비활성이다:"
+                    f" {identity.team_id}"
+                )
+
+        user = self._load_user(identity.account_id, identity.user_id)
+        if user is None:
+            user = self._provision_user(identity)
+        if user.status is not domain.EntityStatus.ACTIVE:
+            raise errors.AuthenticationError(
+                "자격증명이 유효하지 않거나 비활성 상태다."
+            )
+
+        allowed = (
+            identity.config.provision_model_list
+            or self._settings.default_allowed_model_list
+        )
+        return domain.Principal(
+            account_id=identity.account_id,
+            team_id=user.team_id or identity.team_id,
+            user_id=identity.user_id,
+            # 키가 없는 호출이다. 집계에서 키 축이 비어 있음을 나타낸다.
+            key_id="",
+            key_hash="",
+            allowed_models=allowed,
+            account_budget_usd=account.monthly_budget_usd,
+            team_budget_usd=team.monthly_budget_usd if team else None,
+            user_budget_usd=user.monthly_budget_usd,
+            key_budget_usd=None,
+        )
+
+    def _provision_user(self, identity: oidc.VerifiedIdentity) -> domain.User:
+        """토큰 주체를 사용자로 자동 생성한다.
+
+        자동 생성이 꺼져 있으면 거부한다. 켜져 있으면 설정된 예산을 붙여
+        만든다. 예산은 설정 단계에서 필수라 여기서 무제한이 될 수 없다.
+
+        Args:
+            identity: 검증된 주체.
+
+        Returns:
+            생성된(또는 경합으로 이미 생성돼 있던) 사용자.
+
+        Raises:
+            PermissionDeniedError: 자동 생성이 꺼져 있는 경우.
+        """
+        account_config = identity.config
+        if not account_config.auto_provision:
+            raise errors.PermissionDeniedError(
+                "이 토큰의 사용자가 등록되지 않았다:"
+                f" {identity.user_id}. 관리자가 사용자를 만들거나 계정의"
+                " 자동 생성을 켜야 한다."
+            )
+        user = domain.User(
+            account_id=identity.account_id,
+            user_id=identity.user_id,
+            name=identity.display_name,
+            team_id=identity.team_id,
+            monthly_budget_usd=account_config.provision_budget_usd,
+            created_at=clock.to_iso(self._clock.now()),
+        )
+        try:
+            self._registry.put_user(user)
+        except errors.ResourceConflictError:
+            # 같은 사용자가 동시에 두 번 로그인하면 경합이 난다. 이미 만들어진
+            # 것을 읽어 쓰면 되므로 실패로 다루지 않는다.
+            existing = self._registry.get_user(
+                identity.account_id, identity.user_id
+            )
+            if existing is None:
+                raise
+            return existing
+        self._cache.invalidate(f"user:{identity.account_id}:{identity.user_id}")
+        return user
 
     def enforce_model(self, principal: domain.Principal, model_id: str) -> None:
         """요청 모델이 허용 목록에 있는지 확인한다.
