@@ -13,6 +13,8 @@
 (function () {
   'use strict';
 
+  const t = window.LlmgwI18n.t;
+
   const dom = {
     token: document.getElementById('admin-token'),
     account: document.getElementById('account-select'),
@@ -71,7 +73,7 @@
   async function api(method, path, body) {
     const token = dom.token.value.trim();
     if (!token) {
-      throw new Error('관리 토큰을 입력한다.');
+      throw new Error(t('관리 토큰을 입력한다.'));
     }
     const options = {
       method: method,
@@ -111,7 +113,7 @@
    * @returns {string} 표시 문자열.
    */
   function budgetLabel(value) {
-    return value == null ? '무제한' : '$' + Number(value).toFixed(2);
+    return value == null ? t('무제한') : '$' + Number(value).toFixed(2);
   }
 
   /**
@@ -127,7 +129,7 @@
     }
     const value = Number(trimmed);
     if (Number.isNaN(value) || value < 0) {
-      throw new Error('예산은 0 이상의 숫자여야 한다.');
+      throw new Error(t('예산은 0 이상의 숫자여야 한다.'));
     }
     return value;
   }
@@ -214,13 +216,13 @@
 
     const cancel = document.createElement('button');
     cancel.type = 'button';
-    cancel.textContent = '취소';
+    cancel.textContent = t('취소');
     cancel.addEventListener('click', closeModal);
 
     const submit = document.createElement('button');
     submit.type = 'submit';
     submit.className = 'primary';
-    submit.textContent = '저장';
+    submit.textContent = t('저장');
 
     actions.appendChild(cancel);
     actions.appendChild(submit);
@@ -293,13 +295,13 @@
 
     const cancel = document.createElement('button');
     cancel.type = 'button';
-    cancel.textContent = '취소';
+    cancel.textContent = t('취소');
     cancel.addEventListener('click', closeModal);
 
     const confirm = document.createElement('button');
     confirm.type = 'button';
     confirm.className = opts.confirmKind || 'danger';
-    confirm.textContent = opts.confirmLabel || '삭제';
+    confirm.textContent = opts.confirmLabel || t('삭제');
     confirm.addEventListener('click', async function () {
       error.textContent = '';
       confirm.disabled = true;
@@ -353,7 +355,7 @@
       emptyRow.className = 'empty-row';
       const cell = document.createElement('td');
       cell.colSpan = headers.length;
-      cell.textContent = '항목이 없다.';
+      cell.textContent = t('항목이 없다.');
       emptyRow.appendChild(cell);
       tbody.appendChild(emptyRow);
     } else {
@@ -411,7 +413,7 @@
     const badge = document.createElement('span');
     const ok = status === 'active';
     badge.className = 'badge ' + (ok ? 'badge-ok' : 'badge-error');
-    badge.textContent = ok ? '활성' : '비활성';
+    badge.textContent = ok ? t('활성') : t('비활성');
     return badge;
   }
 
@@ -447,22 +449,22 @@
 
     const container = document.createElement('div');
     container.appendChild(
-      buildToolbar('계정 만들기', function () {
+      buildToolbar(t('계정 만들기'), function () {
         openFormModal(
-          '계정 만들기',
+          t('계정 만들기'),
           [
             {
               name: 'account_id',
-              label: '계정 ID',
-              placeholder: '소문자·숫자·하이픈',
+              label: t('계정 ID'),
+              placeholder: t('소문자·숫자·하이픈'),
             },
-            { name: 'name', label: '이름' },
+            { name: 'name', label: t('이름') },
             {
               name: 'monthly_budget_usd',
-              label: '월 예산 (USD)',
+              label: t('월 예산 (USD)'),
               type: 'number',
               step: '0.01',
-              hint: '비우면 무제한',
+              hint: t('비우면 무제한'),
             },
           ],
           async function (values) {
@@ -471,7 +473,7 @@
               name: values.name.trim(),
               monthly_budget_usd: parseBudget(values.monthly_budget_usd),
             });
-            setStatus('계정을 만들었다.', 'ok');
+            setStatus(t('계정을 만들었다.'), 'ok');
             await renderManage();
             await syncAccountSelect();
           }
@@ -482,19 +484,19 @@
     const rows = accounts.map(function (account) {
       const actions = buildActions([
         {
-          label: '수정',
+          label: t('수정'),
           onClick: function () {
             openFormModal(
-              '계정 수정: ' + account.account_id,
+              t('계정 수정: ') + account.account_id,
               [
-                { name: 'name', label: '이름', value: account.name },
+                { name: 'name', label: t('이름'), value: account.name },
                 {
                   name: 'monthly_budget_usd',
-                  label: '월 예산 (USD)',
+                  label: t('월 예산 (USD)'),
                   type: 'number',
                   step: '0.01',
                   value: account.monthly_budget_usd,
-                  hint: '비우면 무제한',
+                  hint: t('비우면 무제한'),
                 },
               ],
               async function (values) {
@@ -506,7 +508,7 @@
                     monthly_budget_usd: parseBudget(values.monthly_budget_usd),
                   }
                 );
-                setStatus('계정을 수정했다.', 'ok');
+                setStatus(t('계정을 수정했다.'), 'ok');
                 await renderManage();
                 await syncAccountSelect();
               }
@@ -514,7 +516,7 @@
           },
         },
         {
-          label: account.status === 'active' ? '비활성화' : '활성화',
+          label: account.status === 'active' ? t('비활성화') : t('활성화'),
           onClick: async function () {
             const next =
               account.status === 'active' ? 'disabled' : 'active';
@@ -524,24 +526,24 @@
                 encodeURIComponent(account.account_id) + '/status',
               { status: next }
             );
-            setStatus('계정 상태를 변경했다.', 'ok');
+            setStatus(t('계정 상태를 변경했다.'), 'ok');
             await renderManage();
             await syncAccountSelect();
           },
         },
         {
-          label: '삭제',
+          label: t('삭제'),
           kind: 'danger',
           onClick: function () {
             openConfirm(
               account.account_id +
-                ' 계정을 삭제한다. 하위 팀·사용자·키가 있으면 거부된다.',
+                t(' 계정을 삭제한다. 하위 팀·사용자·키가 있으면 거부된다.'),
               async function () {
                 await api(
                   'DELETE',
                   '/admin/accounts/' + encodeURIComponent(account.account_id)
                 );
-                setStatus('계정을 삭제했다.', 'ok');
+                setStatus(t('계정을 삭제했다.'), 'ok');
                 await renderManage();
                 await syncAccountSelect();
               }
@@ -559,7 +561,7 @@
     });
 
     container.appendChild(
-      buildTable(['계정 ID', '이름', '상태', '월 예산', '작업'], rows)
+      buildTable([t('계정 ID'), t('이름'), t('상태'), t('월 예산'), t('작업')], rows)
     );
     dom.managePanel.replaceChildren(container);
   }
@@ -574,7 +576,7 @@
   function requireAccountId() {
     const accountId = dom.account.value;
     if (!accountId) {
-      throw new Error('계정을 먼저 선택한다.');
+      throw new Error(t('계정을 먼저 선택한다.'));
     }
     return accountId;
   }
@@ -592,22 +594,22 @@
 
     const container = document.createElement('div');
     container.appendChild(
-      buildToolbar('팀 만들기', function () {
+      buildToolbar(t('팀 만들기'), function () {
         openFormModal(
-          '팀 만들기 (' + accountId + ')',
+          t('팀 만들기 (') + accountId + ')',
           [
             {
               name: 'team_id',
-              label: '팀 ID',
-              placeholder: '소문자·숫자·하이픈',
+              label: t('팀 ID'),
+              placeholder: t('소문자·숫자·하이픈'),
             },
-            { name: 'name', label: '이름' },
+            { name: 'name', label: t('이름') },
             {
               name: 'monthly_budget_usd',
-              label: '월 예산 (USD)',
+              label: t('월 예산 (USD)'),
               type: 'number',
               step: '0.01',
-              hint: '비우면 계정 예산만 적용',
+              hint: t('비우면 계정 예산만 적용'),
             },
           ],
           async function (values) {
@@ -616,7 +618,7 @@
               name: values.name.trim(),
               monthly_budget_usd: parseBudget(values.monthly_budget_usd),
             });
-            setStatus('팀을 만들었다.', 'ok');
+            setStatus(t('팀을 만들었다.'), 'ok');
             await renderManage();
           }
         );
@@ -626,19 +628,19 @@
     const rows = teams.map(function (team) {
       const actions = buildActions([
         {
-          label: '수정',
+          label: t('수정'),
           onClick: function () {
             openFormModal(
-              '팀 수정: ' + team.team_id,
+              t('팀 수정: ') + team.team_id,
               [
-                { name: 'name', label: '이름', value: team.name },
+                { name: 'name', label: t('이름'), value: team.name },
                 {
                   name: 'monthly_budget_usd',
-                  label: '월 예산 (USD)',
+                  label: t('월 예산 (USD)'),
                   type: 'number',
                   step: '0.01',
                   value: team.monthly_budget_usd,
-                  hint: '비우면 계정 예산만 적용',
+                  hint: t('비우면 계정 예산만 적용'),
                 },
               ],
               async function (values) {
@@ -650,14 +652,14 @@
                     monthly_budget_usd: parseBudget(values.monthly_budget_usd),
                   }
                 );
-                setStatus('팀을 수정했다.', 'ok');
+                setStatus(t('팀을 수정했다.'), 'ok');
                 await renderManage();
               }
             );
           },
         },
         {
-          label: team.status === 'active' ? '비활성화' : '활성화',
+          label: team.status === 'active' ? t('비활성화') : t('활성화'),
           onClick: async function () {
             const next = team.status === 'active' ? 'disabled' : 'active';
             await api(
@@ -665,22 +667,22 @@
               base + '/teams/' + encodeURIComponent(team.team_id) + '/status',
               { status: next }
             );
-            setStatus('팀 상태를 변경했다.', 'ok');
+            setStatus(t('팀 상태를 변경했다.'), 'ok');
             await renderManage();
           },
         },
         {
-          label: '삭제',
+          label: t('삭제'),
           kind: 'danger',
           onClick: function () {
             openConfirm(
-              team.team_id + ' 팀을 삭제한다. 소속 사용자·키가 있으면 거부된다.',
+              team.team_id + t(' 팀을 삭제한다. 소속 사용자·키가 있으면 거부된다.'),
               async function () {
                 await api(
                   'DELETE',
                   base + '/teams/' + encodeURIComponent(team.team_id)
                 );
-                setStatus('팀을 삭제했다.', 'ok');
+                setStatus(t('팀을 삭제했다.'), 'ok');
                 await renderManage();
               }
             );
@@ -697,7 +699,7 @@
     });
 
     container.appendChild(
-      buildTable(['팀 ID', '이름', '상태', '월 예산', '작업'], rows)
+      buildTable([t('팀 ID'), t('이름'), t('상태'), t('월 예산'), t('작업')], rows)
     );
     dom.managePanel.replaceChildren(container);
   }
@@ -717,28 +719,28 @@
 
     const container = document.createElement('div');
     container.appendChild(
-      buildToolbar('사용자 만들기', function () {
+      buildToolbar(t('사용자 만들기'), function () {
         openFormModal(
-          '사용자 만들기 (' + accountId + ')',
+          t('사용자 만들기 (') + accountId + ')',
           [
             {
               name: 'user_id',
-              label: '사용자 ID',
-              placeholder: '소문자·숫자·. _ -',
+              label: t('사용자 ID'),
+              placeholder: t('소문자·숫자·. _ -'),
             },
-            { name: 'name', label: '이름' },
-            { name: 'email', label: '이메일', type: 'email' },
+            { name: 'name', label: t('이름') },
+            { name: 'email', label: t('이메일'), type: 'email' },
             {
               name: 'team_id',
-              label: '팀 ID',
-              hint: '비우면 팀 없음. 존재하는 팀이어야 한다.',
+              label: t('팀 ID'),
+              hint: t('비우면 팀 없음. 존재하는 팀이어야 한다.'),
             },
             {
               name: 'monthly_budget_usd',
-              label: '월 예산 (USD)',
+              label: t('월 예산 (USD)'),
               type: 'number',
               step: '0.01',
-              hint: '비우면 상위 예산만 적용',
+              hint: t('비우면 상위 예산만 적용'),
             },
           ],
           async function (values) {
@@ -754,7 +756,7 @@
               payload.team_id = values.team_id.trim();
             }
             await api('POST', base + '/users', payload);
-            setStatus('사용자를 만들었다.', 'ok');
+            setStatus(t('사용자를 만들었다.'), 'ok');
             await renderManage();
           }
         );
@@ -764,31 +766,31 @@
     const rows = users.map(function (user) {
       const actions = buildActions([
         {
-          label: '수정',
+          label: t('수정'),
           onClick: function () {
             openFormModal(
-              '사용자 수정: ' + user.user_id,
+              t('사용자 수정: ') + user.user_id,
               [
-                { name: 'name', label: '이름', value: user.name },
+                { name: 'name', label: t('이름'), value: user.name },
                 {
                   name: 'email',
-                  label: '이메일',
+                  label: t('이메일'),
                   type: 'email',
                   value: user.email,
                 },
                 {
                   name: 'team_id',
-                  label: '팀 ID',
+                  label: t('팀 ID'),
                   value: user.team_id,
-                  hint: '존재하는 팀이어야 한다. 비우면 팀 없음.',
+                  hint: t('존재하는 팀이어야 한다. 비우면 팀 없음.'),
                 },
                 {
                   name: 'monthly_budget_usd',
-                  label: '월 예산 (USD)',
+                  label: t('월 예산 (USD)'),
                   type: 'number',
                   step: '0.01',
                   value: user.monthly_budget_usd,
-                  hint: '비우면 상위 예산만 적용',
+                  hint: t('비우면 상위 예산만 적용'),
                 },
               ],
               async function (values) {
@@ -802,14 +804,14 @@
                     monthly_budget_usd: parseBudget(values.monthly_budget_usd),
                   }
                 );
-                setStatus('사용자를 수정했다.', 'ok');
+                setStatus(t('사용자를 수정했다.'), 'ok');
                 await renderManage();
               }
             );
           },
         },
         {
-          label: user.status === 'active' ? '비활성화' : '활성화',
+          label: user.status === 'active' ? t('비활성화') : t('활성화'),
           onClick: async function () {
             const next = user.status === 'active' ? 'disabled' : 'active';
             await api(
@@ -817,22 +819,22 @@
               base + '/users/' + encodeURIComponent(user.user_id) + '/status',
               { status: next }
             );
-            setStatus('사용자 상태를 변경했다.', 'ok');
+            setStatus(t('사용자 상태를 변경했다.'), 'ok');
             await renderManage();
           },
         },
         {
-          label: '삭제',
+          label: t('삭제'),
           kind: 'danger',
           onClick: function () {
             openConfirm(
-              user.user_id + ' 사용자를 삭제한다. 소유 키가 있으면 거부된다.',
+              user.user_id + t(' 사용자를 삭제한다. 소유 키가 있으면 거부된다.'),
               async function () {
                 await api(
                   'DELETE',
                   base + '/users/' + encodeURIComponent(user.user_id)
                 );
-                setStatus('사용자를 삭제했다.', 'ok');
+                setStatus(t('사용자를 삭제했다.'), 'ok');
                 await renderManage();
               }
             );
@@ -851,7 +853,7 @@
 
     container.appendChild(
       buildTable(
-        ['사용자 ID', '이름', '팀', '상태', '월 예산', '작업'],
+        [t('사용자 ID'), t('이름'), t('팀'), t('상태'), t('월 예산'), t('작업')],
         rows
       )
     );
@@ -872,16 +874,16 @@
     dialog.className = 'modal';
     dialog.setAttribute('role', 'dialog');
     dialog.setAttribute('aria-modal', 'true');
-    dialog.setAttribute('aria-label', '발급된 API 키');
+    dialog.setAttribute('aria-label', t('발급된 API 키'));
 
     const heading = document.createElement('h3');
-    heading.textContent = '발급된 API 키';
+    heading.textContent = t('발급된 API 키');
     dialog.appendChild(heading);
 
     const note = document.createElement('p');
     note.className = 'modal-hint';
     note.textContent =
-      '이 키는 지금만 볼 수 있다. 안전한 곳에 보관한다. 창을 닫으면 다시 볼 수 없다.';
+      t('이 키는 지금만 볼 수 있다. 안전한 곳에 보관한다. 창을 닫으면 다시 볼 수 없다.');
     dialog.appendChild(note);
 
     const code = document.createElement('pre');
@@ -894,11 +896,11 @@
 
     const copy = document.createElement('button');
     copy.type = 'button';
-    copy.textContent = '복사';
+    copy.textContent = t('복사');
     copy.addEventListener('click', function () {
       if (navigator.clipboard && navigator.clipboard.writeText) {
         navigator.clipboard.writeText(plaintext).then(function () {
-          copy.textContent = '복사됨';
+          copy.textContent = t('복사됨');
         });
       }
     });
@@ -906,7 +908,7 @@
     const done = document.createElement('button');
     done.type = 'button';
     done.className = 'primary';
-    done.textContent = '닫기';
+    done.textContent = t('닫기');
     done.addEventListener('click', closeModal);
 
     actions.appendChild(copy);
@@ -930,27 +932,27 @@
 
     const container = document.createElement('div');
     container.appendChild(
-      buildToolbar('키 발급', function () {
+      buildToolbar(t('키 발급'), function () {
         openFormModal(
-          '키 발급 (' + accountId + ')',
+          t('키 발급 (') + accountId + ')',
           [
             {
               name: 'user_id',
-              label: '사용자 ID',
-              hint: '존재하는 사용자여야 한다. 팀은 사용자에서 상속된다.',
+              label: t('사용자 ID'),
+              hint: t('존재하는 사용자여야 한다. 팀은 사용자에서 상속된다.'),
             },
-            { name: 'name', label: '이름(메모)' },
+            { name: 'name', label: t('이름(메모)') },
             {
               name: 'allowed_models',
-              label: '허용 모델',
-              hint: '쉼표로 구분. 비우면 서버 기본 정책.',
+              label: t('허용 모델'),
+              hint: t('쉼표로 구분. 비우면 서버 기본 정책.'),
             },
             {
               name: 'monthly_budget_usd',
-              label: '월 예산 (USD)',
+              label: t('월 예산 (USD)'),
               type: 'number',
               step: '0.01',
-              hint: '비우면 상위 예산만 적용',
+              hint: t('비우면 상위 예산만 적용'),
             },
           ],
           async function (values) {
@@ -960,7 +962,7 @@
               allowed_models: splitModels(values.allowed_models),
               monthly_budget_usd: parseBudget(values.monthly_budget_usd),
             });
-            setStatus('키를 발급했다.', 'ok');
+            setStatus(t('키를 발급했다.'), 'ok');
             await renderManage();
             if (created && created.api_key) {
               showPlaintextKey(created.api_key);
@@ -976,25 +978,25 @@
     const rows = keys.map(function (key) {
       const actions = buildActions([
         {
-          label: '수정',
+          label: t('수정'),
           onClick: function () {
             openFormModal(
-              '키 수정: ' + key.key_id,
+              t('키 수정: ') + key.key_id,
               [
-                { name: 'name', label: '이름(메모)', value: key.name },
+                { name: 'name', label: t('이름(메모)'), value: key.name },
                 {
                   name: 'allowed_models',
-                  label: '허용 모델',
+                  label: t('허용 모델'),
                   value: (key.allowed_models || []).join(', '),
-                  hint: '쉼표로 구분. 비우면 서버 기본 정책.',
+                  hint: t('쉼표로 구분. 비우면 서버 기본 정책.'),
                 },
                 {
                   name: 'monthly_budget_usd',
-                  label: '월 예산 (USD)',
+                  label: t('월 예산 (USD)'),
                   type: 'number',
                   step: '0.01',
                   value: key.monthly_budget_usd,
-                  hint: '비우면 상위 예산만 적용',
+                  hint: t('비우면 상위 예산만 적용'),
                 },
               ],
               async function (values) {
@@ -1007,14 +1009,14 @@
                     monthly_budget_usd: parseBudget(values.monthly_budget_usd),
                   }
                 );
-                setStatus('키를 수정했다.', 'ok');
+                setStatus(t('키를 수정했다.'), 'ok');
                 await renderManage();
               }
             );
           },
         },
         {
-          label: key.status === 'active' ? '비활성화' : '활성화',
+          label: key.status === 'active' ? t('비활성화') : t('활성화'),
           onClick: async function () {
             const next = key.status === 'active' ? 'disabled' : 'active';
             await api(
@@ -1022,22 +1024,22 @@
               base + '/keys/' + encodeURIComponent(key.key_id) + '/status',
               { status: next }
             );
-            setStatus('키 상태를 변경했다.', 'ok');
+            setStatus(t('키 상태를 변경했다.'), 'ok');
             await renderManage();
           },
         },
         {
-          label: '재발급',
+          label: t('재발급'),
           onClick: function () {
             openConfirm(
               key.key_id +
-                ' 키를 재발급한다. 옛 키는 즉시 무효가 되고 새 키가 발급된다.',
+                t(' 키를 재발급한다. 옛 키는 즉시 무효가 되고 새 키가 발급된다.'),
               async function () {
                 const rotated = await api(
                   'POST',
                   base + '/keys/' + encodeURIComponent(key.key_id) + '/rotate'
                 );
-                setStatus('키를 재발급했다.', 'ok');
+                setStatus(t('키를 재발급했다.'), 'ok');
                 await renderManage();
                 if (rotated && rotated.api_key) {
                   showPlaintextKey(rotated.api_key);
@@ -1046,22 +1048,22 @@
                 }
                 return false;
               },
-              { confirmLabel: '재발급', confirmKind: 'primary' }
+              { confirmLabel: t('재발급'), confirmKind: 'primary' }
             );
           },
         },
         {
-          label: '삭제',
+          label: t('삭제'),
           kind: 'danger',
           onClick: function () {
             openConfirm(
-              key.key_id + ' 키를 삭제한다. 이 키는 즉시 무효가 된다.',
+              key.key_id + t(' 키를 삭제한다. 이 키는 즉시 무효가 된다.'),
               async function () {
                 await api(
                   'DELETE',
                   base + '/keys/' + encodeURIComponent(key.key_id)
                 );
-                setStatus('키를 삭제했다.', 'ok');
+                setStatus(t('키를 삭제했다.'), 'ok');
                 await renderManage();
               }
             );
@@ -1082,7 +1084,7 @@
 
     container.appendChild(
       buildTable(
-        ['키 ID', '접두어', '이름', '사용자', '팀', '상태', '월 예산', '작업'],
+        [t('키 ID'), t('접두어'), t('이름'), t('사용자'), t('팀'), t('상태'), t('월 예산'), t('작업')],
         rows
       )
     );
@@ -1130,9 +1132,9 @@
     const hint = document.createElement('p');
     hint.className = 'manage-hint';
     hint.textContent =
-      '인증 서버를 연결하면 이 계정 사용자는 API 키 없이 IdP 액세스 토큰으로' +
-      ' 호출할 수 있다. 관리자 그룹에 속한 사람은 공유 관리 토큰 없이 이' +
-      ' 계정을 관리한다. 발급자는 계정 간에 겹칠 수 없다.';
+      t('인증 서버를 연결하면 이 계정 사용자는 API 키 없이 IdP 액세스 토큰으로') +
+      t(' 호출할 수 있다. 관리자 그룹에 속한 사람은 공유 관리 토큰 없이 이') +
+      t(' 계정을 관리한다. 발급자는 계정 간에 겹칠 수 없다.');
     container.appendChild(hint);
 
     const toolbar = document.createElement('div');
@@ -1141,7 +1143,7 @@
     const editButton = document.createElement('button');
     editButton.type = 'button';
     editButton.className = 'primary';
-    editButton.textContent = configured ? '설정 수정' : '인증 서버 연결';
+    editButton.textContent = configured ? t('설정 수정') : t('인증 서버 연결');
     editButton.addEventListener('click', function () {
       openAuthConfigForm(accountId, base, configured ? config : null);
     });
@@ -1151,37 +1153,37 @@
       const toggle = document.createElement('button');
       toggle.type = 'button';
       const disabling = config.status === 'active';
-      toggle.textContent = disabling ? '즉시 차단' : '다시 허용';
+      toggle.textContent = disabling ? t('즉시 차단') : t('다시 허용');
       toggle.addEventListener('click', async function () {
         try {
           await api('POST', base + '/auth/status', {
             status: disabling ? 'disabled' : 'active',
           });
           setStatus(
-            disabling ? '외부 인증을 차단했다.' : '외부 인증을 허용했다.',
+            disabling ? t('외부 인증을 차단했다.') : t('외부 인증을 허용했다.'),
             'ok'
           );
           renderManage();
         } catch (error) {
-          setStatus('상태 변경 실패: ' + error.message, 'error');
+          setStatus(t('상태 변경 실패: ') + error.message, 'error');
         }
       });
       toolbar.appendChild(toggle);
 
       const remove = document.createElement('button');
       remove.type = 'button';
-      remove.textContent = '연결 해제';
+      remove.textContent = t('연결 해제');
       remove.addEventListener('click', function () {
         openConfirm(
-          '이 계정의 외부 인증 설정을 삭제한다. 발급자 등록도 함께 사라져' +
-            ' 다른 계정이 같은 발급자를 쓸 수 있게 된다. IdP 토큰으로' +
-            ' 호출하던 사용자는 즉시 차단된다.',
+          t('이 계정의 외부 인증 설정을 삭제한다. 발급자 등록도 함께 사라져') +
+            t(' 다른 계정이 같은 발급자를 쓸 수 있게 된다. IdP 토큰으로') +
+            t(' 호출하던 사용자는 즉시 차단된다.'),
           async function () {
             await api('DELETE', base + '/auth');
-            setStatus('외부 인증 설정을 삭제했다.', 'ok');
+            setStatus(t('외부 인증 설정을 삭제했다.'), 'ok');
             renderManage();
           },
-          { confirmLabel: '연결 해제', confirmKind: 'danger' }
+          { confirmLabel: t('연결 해제'), confirmKind: 'danger' }
         );
       });
       toolbar.appendChild(remove);
@@ -1192,43 +1194,43 @@
       const empty = document.createElement('p');
       empty.className = 'chart-empty';
       empty.textContent =
-        '아직 연결된 인증 서버가 없다. 이 계정은 API 키로만 호출할 수 있다.';
+        t('아직 연결된 인증 서버가 없다. 이 계정은 API 키로만 호출할 수 있다.');
       container.appendChild(empty);
       dom.managePanel.replaceChildren(container);
       return;
     }
 
     const rows = [
-      ['상태', statusBadge(config.status)],
-      ['발급자 (iss)', codeCell(config.issuer)],
+      [t('상태'), statusBadge(config.status)],
+      [t('발급자 (iss)'), codeCell(config.issuer)],
       ['JWKS URL', codeCell(config.effective_jwks_url)],
-      ['허용 클라이언트 (aud)', textCell(config.audience || '(검사 안 함)')],
-      ['사용자 클레임', codeCell(config.user_claim)],
-      ['팀 클레임', codeCell(config.team_claim || '(사용 안 함)')],
-      ['그룹 클레임', codeCell(config.groups_claim)],
+      [t('허용 클라이언트 (aud)'), textCell(config.audience || t('(검사 안 함)'))],
+      [t('사용자 클레임'), codeCell(config.user_claim)],
+      [t('팀 클레임'), codeCell(config.team_claim || t('(사용 안 함)'))],
+      [t('그룹 클레임'), codeCell(config.groups_claim)],
       [
-        '계정 관리자 그룹',
-        textCell(config.admin_groups || '(없음 — 관리 토큰만 사용)'),
+        t('계정 관리자 그룹'),
+        textCell(config.admin_groups || t('(없음 — 관리 토큰만 사용)')),
       ],
       [
-        '미등록 사용자 자동 생성',
-        textCell(config.auto_provision ? '켜짐' : '꺼짐'),
+        t('미등록 사용자 자동 생성'),
+        textCell(config.auto_provision ? t('켜짐') : t('꺼짐')),
       ],
       [
-        '자동 생성 허용 모델',
-        textCell(config.provision_allowed_models || '(제한 없음)'),
+        t('자동 생성 허용 모델'),
+        textCell(config.provision_allowed_models || t('(제한 없음)')),
       ],
       [
-        '자동 생성 월 예산',
+        t('자동 생성 월 예산'),
         textCell(
           config.provision_budget_usd === null
-            ? '(미설정)'
+            ? t('(미설정)')
             : '$' + config.provision_budget_usd
         ),
       ],
-      ['수정 시각', textCell(config.updated_at || '-')],
+      [t('수정 시각'), textCell(config.updated_at || '-')],
     ];
-    container.appendChild(buildTable(['항목', '값'], rows));
+    container.appendChild(buildTable([t('항목'), t('값')], rows));
     dom.managePanel.replaceChildren(container);
   }
 
@@ -1266,7 +1268,7 @@
     const badge = document.createElement('span');
     badge.className =
       'badge ' + (status === 'active' ? 'badge-ok' : 'badge-error');
-    badge.textContent = status === 'active' ? '활성' : '차단됨';
+    badge.textContent = status === 'active' ? t('활성') : t('차단됨');
     return badge;
   }
 
@@ -1280,72 +1282,72 @@
   function openAuthConfigForm(accountId, base, current) {
     const existing = current || {};
     openFormModal(
-      (current ? '인증 설정 수정' : '인증 서버 연결') + ' (' + accountId + ')',
+      (current ? t('인증 설정 수정') : t('인증 서버 연결')) + ' (' + accountId + ')',
       [
         {
           name: 'issuer',
-          label: '발급자 URL (iss)',
+          label: t('발급자 URL (iss)'),
           value: existing.issuer || '',
           placeholder:
-            'https://cognito-idp.<리전>.amazonaws.com/<유저풀ID>',
-          hint: '토큰의 iss 와 정확히 일치해야 한다. 계정 간 중복 불가.',
+            t('https://cognito-idp.<리전>.amazonaws.com/<유저풀ID>'),
+          hint: t('토큰의 iss 와 정확히 일치해야 한다. 계정 간 중복 불가.'),
         },
         {
           name: 'jwks_url',
-          label: 'JWKS URL (선택)',
+          label: t('JWKS URL (선택)'),
           value: existing.jwks_url || '',
           hint:
-            '비우면 발급자 + /.well-known/jwks.json 을 쓴다. https 만' +
-            ' 허용하며 내부 네트워크 주소는 거부된다.',
+            t('비우면 발급자 + /.well-known/jwks.json 을 쓴다. https 만') +
+            t(' 허용하며 내부 네트워크 주소는 거부된다.'),
         },
         {
           name: 'audience',
-          label: '허용 클라이언트 ID (선택)',
+          label: t('허용 클라이언트 ID (선택)'),
           value: existing.audience || '',
-          hint: '쉼표로 구분. 비우면 청중을 검사하지 않는다.',
+          hint: t('쉼표로 구분. 비우면 청중을 검사하지 않는다.'),
         },
         {
           name: 'user_claim',
-          label: '사용자 클레임',
+          label: t('사용자 클레임'),
           value: existing.user_claim || 'email',
-          hint: '사용자 ID 로 쓸 클레임. Cognito 는 보통 email 이다.',
+          hint: t('사용자 ID 로 쓸 클레임. Cognito 는 보통 email 이다.'),
         },
         {
           name: 'team_claim',
-          label: '팀 클레임 (선택)',
+          label: t('팀 클레임 (선택)'),
           value: existing.team_claim || '',
-          hint: '예: custom:team_id. 비우면 팀 없이 동작한다.',
+          hint: t('예: custom:team_id. 비우면 팀 없이 동작한다.'),
         },
         {
           name: 'groups_claim',
-          label: '그룹 클레임',
+          label: t('그룹 클레임'),
           value: existing.groups_claim || 'cognito:groups',
         },
         {
           name: 'admin_groups',
-          label: '계정 관리자 그룹 (선택)',
+          label: t('계정 관리자 그룹 (선택)'),
           value: existing.admin_groups || '',
           hint:
-            '이 그룹에 속한 사람은 관리 토큰 없이 이 계정을 관리한다.' +
-            ' 쉼표로 구분.',
+            t('이 그룹에 속한 사람은 관리 토큰 없이 이 계정을 관리한다.') +
+            t(' 쉼표로 구분.'),
         },
         {
           name: 'auto_provision',
-          label: '미등록 사용자 자동 생성 (yes/no)',
+          label: t('미등록 사용자 자동 생성 (yes/no)'),
           value: existing.auto_provision ? 'yes' : 'no',
           hint:
-            'yes 로 하면 IdP 에 로그인한 사람이 곧 사용자가 된다. 이때' +
-            ' 월 예산을 반드시 지정해야 한다.',
+            t('yes 로 하면 IdP 에 로그인한 사람이 곧 사용자가 된다. 이때') +
+            t(' 월 예산을 반드시 지정해야 한다.'),
         },
         {
           name: 'provision_allowed_models',
-          label: '자동 생성 허용 모델 (선택)',
+          label: t('자동 생성 허용 모델 (선택)'),
           value: existing.provision_allowed_models || '',
-          hint: '쉼표로 구분. 비우면 서버 기본값을 따른다.',
+          hint: t('쉼표로 구분. 비우면 서버 기본값을 따른다.'),
         },
         {
           name: 'provision_budget_usd',
-          label: '자동 생성 월 예산 (USD)',
+          label: t('자동 생성 월 예산 (USD)'),
           type: 'number',
           step: '0.01',
           value:
@@ -1353,7 +1355,7 @@
             existing.provision_budget_usd === undefined
               ? ''
               : existing.provision_budget_usd,
-          hint: '자동 생성을 켜면 필수다.',
+          hint: t('자동 생성을 켜면 필수다.'),
         },
       ],
       async function (values) {
@@ -1371,7 +1373,7 @@
           provision_allowed_models: values.provision_allowed_models.trim(),
           provision_budget_usd: parseBudget(values.provision_budget_usd),
         });
-        setStatus('외부 인증 설정을 저장했다.', 'ok');
+        setStatus(t('외부 인증 설정을 저장했다.'), 'ok');
         renderManage();
       }
     );
@@ -1386,7 +1388,7 @@
     const token = dom.token.value.trim();
     if (!token) {
       dom.managePanel.replaceChildren();
-      setStatus('관리 토큰을 입력하고 조회를 누른다.', 'error');
+      setStatus(t('관리 토큰을 입력하고 조회를 누른다.'), 'error');
       return;
     }
     try {
@@ -1404,9 +1406,9 @@
     } catch (error) {
       const message = document.createElement('p');
       message.className = 'manage-error';
-      message.textContent = '불러오기 실패: ' + error.message;
+      message.textContent = t('불러오기 실패: ') + error.message;
       dom.managePanel.replaceChildren(message);
-      setStatus('불러오기 실패: ' + error.message, 'error');
+      setStatus(t('불러오기 실패: ') + error.message, 'error');
     }
   }
 
@@ -1480,6 +1482,16 @@
       }
     });
   }
+
+  // 언어 전환 시 관리 화면을 다시 그린다. 관리 화면은 동적으로 만들어지므로
+  // data-i18n 갱신만으로는 반영되지 않는다.
+  window.LlmgwAdmin = {
+    rerender: function () {
+      if (!dom.screenManage.hidden) {
+        renderManage();
+      }
+    },
+  };
 
   init();
 })();

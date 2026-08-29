@@ -629,3 +629,20 @@ def api_key(registry: repository.RegistryRepository) -> str:
 def admin_headers(settings: config.Settings) -> dict[str, str]:
     """관리 API 인증 헤더를 제공한다."""
     return {"X-Admin-Token": settings.admin_token}
+
+
+# ---------------------------------------------------------------------------
+# 브라우저 UI 픽스처 재노출
+# ---------------------------------------------------------------------------
+# test_ui_playwright.py 가 정의한 픽스처를 다른 브라우저 테스트 파일에서도
+# 쓸 수 있게 여기서 다시 내보낸다. 테스트 파일끼리 import 하면 ruff 가
+# 미사용 import 로 보고, 픽스처 재정의 경고도 난다.
+
+
+def pytest_configure(config: typing.Any) -> None:
+    """브라우저 픽스처를 플러그인으로 등록한다.
+
+    Args:
+        config: pytest 설정 객체.
+    """
+    config.pluginmanager.import_plugin("test_ui_playwright")

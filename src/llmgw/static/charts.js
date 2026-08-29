@@ -15,6 +15,8 @@
 (function (global) {
   'use strict';
 
+  const t = window.LlmgwI18n.t;
+
   const SVG_NS = 'http://www.w3.org/2000/svg';
 
   const SERIES_VARS = [
@@ -145,7 +147,7 @@
       return item.values && item.values.length === labels.length;
     });
     if (!labels.length || !series.length) {
-      renderEmpty(container, '표시할 데이터가 없다.');
+      renderEmpty(container, t('표시할 데이터가 없다.'));
       return;
     }
 
@@ -158,7 +160,7 @@
     const svg = el('svg', {
       viewBox: '0 0 ' + width + ' ' + height,
       role: 'img',
-      'aria-label': spec.ariaLabel || '선 그래프',
+      'aria-label': spec.ariaLabel || t('선 그래프'),
     });
 
     const gridColor = cssVar('--border');
@@ -320,7 +322,7 @@
     const labels = spec.labels || [];
     const values = spec.values || [];
     if (!labels.length || !values.length) {
-      renderEmpty(container, '표시할 데이터가 없다.');
+      renderEmpty(container, t('표시할 데이터가 없다.'));
       return;
     }
 
@@ -335,7 +337,7 @@
     const svg = el('svg', {
       viewBox: '0 0 ' + width + ' ' + height,
       role: 'img',
-      'aria-label': spec.ariaLabel || '막대 그래프',
+      'aria-label': spec.ariaLabel || t('막대 그래프'),
     });
 
     labels.forEach(function (label, index) {
@@ -403,7 +405,7 @@
       return sum + (value || 0);
     }, 0);
     if (!labels.length || total <= 0) {
-      renderEmpty(container, '표시할 데이터가 없다.');
+      renderEmpty(container, t('표시할 데이터가 없다.'));
       return;
     }
 
@@ -417,7 +419,7 @@
     const svg = el('svg', {
       viewBox: '0 0 ' + width + ' ' + height,
       role: 'img',
-      'aria-label': spec.ariaLabel || '도넛 차트',
+      'aria-label': spec.ariaLabel || t('도넛 차트'),
     });
 
     let startAngle = -Math.PI / 2;
