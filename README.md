@@ -418,18 +418,21 @@ docker run --rm -p 8080:8080 \
 ## 테스트
 
 유닛 테스트는 실제 AWS 를 호출하지 않는다. DynamoDB 는 `moto`, Bedrock 은
-`botocore.stub.Stubber` 와 대역 객체로 대체한다. 대시보드 차트와 관리 UI 는
-`tests/js/` 의 Node 하네스로 검증하며, Node 가 없으면 해당 테스트만 건너뛴다.
+`botocore.stub.Stubber` 와 대역 객체로 대체한다. 대시보드 차트와 관리 UI의
+빠른 회귀 검증에는 `tests/js/`의 Node 하네스를 쓴다. 핵심 관리 UI 흐름과
+데스크톱·모바일 레이아웃은 Python Playwright와 실제 Chromium으로 별도
+검증한다.
 
 ```bash
-# 전체 (382개, 약 55초)
-./.venv/bin/python -m pytest
+# Chromium 설치 (최초 한 번)
+./.venv/bin/python -m playwright install chromium
 
-# 커버리지
-./.venv/bin/python -m pytest --cov=llmgw --cov-report=term-missing
+# 유닛·Node 하네스 및 커버리지
+./.venv/bin/python -m pytest -m "not browser" \
+  --cov=llmgw --cov-report=term-missing
 
-# 특정 파일
-./.venv/bin/python -m pytest tests/test_usage_store.py -v
+# 실제 브라우저 관리 UI
+./.venv/bin/python -m pytest -m browser tests/test_ui_playwright.py
 ```
 
 커밋 전 전체 검증:
@@ -439,7 +442,8 @@ docker run --rm -p 8080:8080 \
 ./.venv/bin/black src tests scripts
 ./.venv/bin/ruff check src tests scripts
 ./.venv/bin/mypy
-./.venv/bin/python -m pytest
+./.venv/bin/python -m pytest -m "not browser"
+./.venv/bin/python -m pytest -m browser tests/test_ui_playwright.py
 ./.venv/bin/cfn-lint infra/*.yaml
 shellcheck scripts/*.sh
 ./.venv/bin/python scripts/export_openapi.py   # 스펙 갱신
