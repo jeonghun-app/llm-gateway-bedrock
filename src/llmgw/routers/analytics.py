@@ -12,13 +12,16 @@
 from __future__ import annotations
 
 import datetime
+import decimal
 import typing
 
 import fastapi
 
 from llmgw import analytics as analytics_module
+from llmgw import clock
 from llmgw import domain
 from llmgw import errors
+from llmgw import repository
 from llmgw import services as services_module
 
 router = fastapi.APIRouter(prefix="/analytics", tags=["analytics"])
@@ -243,9 +246,146 @@ def dashboard(
         "totals": service.summary(account_id, window).to_api_dict(),
         "timeseries": service.timeseries(account_id, window),
         "breakdowns": breakdowns,
+        "budgets": _budget_view(services, account_id),
         "recent_requests": service.recent_requests(
             account_id, window.end, limit=recent_limit
         ),
+    }
+
+
+def _budget_view(
+    services: services_module.Services, account_id: str
+) -> _JsonDict:
+    """이번 달 예산 소진 현황을 만든다.
+
+    이 제품의 핵심 가치가 비용 통제인데 화면에 예산이 보이지 않으면 소진을
+    사후에만 알게 된다. 계정·팀·사용자·키 네 축의 한도와 이번 달 누적을 함께
+    돌려준다.
+
+    조회 기간과 무관하게 **항상 이번 달**을 본다. 예산은 월 단위로 강제되고
+    과거 예산 이력을 저장하지 않으므로, 지난달 소진율을 현재 한도로 재구성하면
+    사실과 다른 값이 된다.
+
+    Args:
+        services: 서비스 컨테이너.
+        account_id: 계정 ID.
+
+    Returns:
+        월 키와 축별 항목 목록. 한도가 없는 항목은 담지 않는다.
+    """
+    month = clock.month_key(services.clock.now())
+    entries: list[_JsonDict] = []
+
+    account = services.registry.get_account(account_id)
+    if account is not None and account.monthly_budget_usd is not None:
+        entries.append(
+            _budget_entry(
+                services,
+                account_id=account_id,
+                month=month,
+                scope="account",
+                entity_id=account_id,
+                label=account.name,
+                limit=account.monthly_budget_usd,
+                sort_key=repository.dimension_sk(None, ""),
+            )
+        )
+
+    for team in services.registry.list_teams(account_id):
+        if team.monthly_budget_usd is None:
+            continue
+        entries.append(
+            _budget_entry(
+                services,
+                account_id=account_id,
+                month=month,
+                scope="team",
+                entity_id=team.team_id,
+                label=team.name,
+                limit=team.monthly_budget_usd,
+                sort_key=repository.dimension_sk(
+                    domain.BreakdownDimension.TEAM, team.team_id
+                ),
+            )
+        )
+
+    for user in services.registry.list_users(account_id):
+        if user.monthly_budget_usd is None:
+            continue
+        entries.append(
+            _budget_entry(
+                services,
+                account_id=account_id,
+                month=month,
+                scope="user",
+                entity_id=user.user_id,
+                label=user.name,
+                limit=user.monthly_budget_usd,
+                sort_key=repository.dimension_sk(
+                    domain.BreakdownDimension.USER, user.user_id
+                ),
+            )
+        )
+
+    for api_key in services.registry.list_api_keys(account_id):
+        if api_key.monthly_budget_usd is None:
+            continue
+        entries.append(
+            _budget_entry(
+                services,
+                account_id=account_id,
+                month=month,
+                scope="key",
+                entity_id=api_key.key_id,
+                label=api_key.name,
+                limit=api_key.monthly_budget_usd,
+                sort_key=repository.dimension_sk(
+                    domain.BreakdownDimension.KEY, api_key.key_id
+                ),
+            )
+        )
+
+    # 소진율 높은 순으로 정렬한다. 운영자가 먼저 봐야 하는 것이 위에 온다.
+    entries.sort(key=lambda item: item["used_ratio"], reverse=True)
+    return {"month": month, "entries": entries}
+
+
+def _budget_entry(
+    services: services_module.Services,
+    *,
+    account_id: str,
+    month: str,
+    scope: str,
+    entity_id: str,
+    label: str,
+    limit: decimal.Decimal,
+    sort_key: str,
+) -> _JsonDict:
+    """예산 항목 하나를 만든다.
+
+    한도가 0 이면 비율을 계산하지 않는다. 0으로 나누는 것을 피하고, 그 상태는
+    "즉시 차단" 을 뜻하므로 비율보다 상태로 표현해야 한다.
+    """
+    totals = services.usage_store.get_totals(
+        account_id, domain.Granularity.MONTH, month, [sort_key]
+    )
+    bucket = totals.get(sort_key, domain.EMPTY_TOTALS)
+    used = bucket.cost_usd
+    blocked = used >= limit
+    # 한도 0 은 비율이 정의되지 않는다. 사용량이 없어도 차단 상태이므로 1.0
+    # 으로 다룬다.
+    ratio = float(used / limit) if limit > 0 else 1.0
+    return {
+        "scope": scope,
+        "entity_id": entity_id,
+        "label": label,
+        "limit_usd": float(limit),
+        "used_usd": float(used),
+        "used_ratio": ratio,
+        "blocked": blocked,
+        # 단가 표에 없는 모델은 비용이 0으로 집계된다. 그 요청이 섞여 있으면
+        # 소진율이 실제보다 낮게 보이므로 화면에서 함께 알려야 한다.
+        "unpriced_requests": bucket.unpriced_requests,
     }
 
 

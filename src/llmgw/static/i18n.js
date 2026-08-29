@@ -68,6 +68,16 @@
     '실패 요청이 있다': 'has failed requests',
     '실패 없음': 'no failures',
 
+    // -- 예산 소진 --
+    '예산 소진': 'Budget usage',
+    '이번 달': 'This month',
+    '예산이 설정된 항목이 없다. 계정·팀·사용자·키에 월 예산을 지정하면 소진율이 여기 표시된다.':
+      'No budgets are set. Assign a monthly budget to an account, team, user, or key and the burn rate appears here.',
+    '차단됨 — 이 축의 요청이 거부된다': 'Blocked — requests on this axis are rejected',
+    '단가 미등록 요청이 있어 실제 소진율은 더 높을 수 있다':
+      'Some requests use unpriced models, so the real burn may be higher',
+    '한도 0 — 즉시 차단': 'Limit 0 — blocked immediately',
+
     // -- 차트 --
     '추이와 분포': 'Trends and distribution',
     '일별 비용과 요청 수': 'Daily cost and requests',

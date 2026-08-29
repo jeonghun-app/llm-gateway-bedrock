@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import decimal
 import typing
 
 from fastapi import testclient
@@ -436,6 +437,7 @@ def test_dashboard_한번의호출로모든블록을반환한다(
         "totals",
         "timeseries",
         "breakdowns",
+        "budgets",
         "recent_requests",
     }
     assert set(body["breakdowns"]) == {"team", "user", "model", "key"}
@@ -463,3 +465,141 @@ def test_dashboard_데이터가없어도구조를유지한다(
     assert body["breakdowns"]["team"] == []
     assert body["recent_requests"] == []
     assert len(body["timeseries"]) == 30
+
+
+# ---------------------------------------------------------------------------
+# 예산 소진 블록
+# ---------------------------------------------------------------------------
+
+
+def test_dashboard_예산이설정된축만소진현황에담긴다(
+    client: testclient.TestClient,
+    admin_headers: dict[str, str],
+    api_key: str,
+    registry: repository.RegistryRepository,
+    usage_store: repository.UsageStore,
+) -> None:
+    """예산을 지정하지 않은 항목은 무제한이라 소진율이 정의되지 않는다."""
+    # Arrange
+    del api_key
+    _seed(usage_store)
+    account = registry.get_account("acme")
+    assert account is not None
+    registry.put_account(
+        account.model_copy(
+            update={"monthly_budget_usd": decimal.Decimal("100")}
+        ),
+        overwrite=True,
+    )
+
+    # Act
+    response = client.get(
+        "/analytics/dashboard",
+        params={"account_id": "acme"},
+        headers=admin_headers,
+    )
+
+    # Assert
+    assert response.status_code == 200, response.text
+    budgets = response.json()["budgets"]
+    scopes = [entry["scope"] for entry in budgets["entries"]]
+    assert scopes == ["account"], f"예산 없는 축이 섞였다: {scopes}"
+    entry = budgets["entries"][0]
+    assert entry["limit_usd"] == 100.0
+    assert entry["blocked"] is False
+    assert 0.0 <= entry["used_ratio"] <= 1.0
+
+
+def test_dashboard_예산이없으면항목이비어있다(
+    client: testclient.TestClient,
+    admin_headers: dict[str, str],
+    api_key: str,
+    usage_store: repository.UsageStore,
+) -> None:
+    # Arrange
+    del api_key
+    _seed(usage_store)
+
+    # Act
+    response = client.get(
+        "/analytics/dashboard",
+        params={"account_id": "acme"},
+        headers=admin_headers,
+    )
+
+    # Assert
+    assert response.json()["budgets"]["entries"] == []
+
+
+def test_dashboard_한도0은차단상태로표시된다(
+    client: testclient.TestClient,
+    admin_headers: dict[str, str],
+    api_key: str,
+    registry: repository.RegistryRepository,
+    usage_store: repository.UsageStore,
+) -> None:
+    """0으로 나누지 않아야 하고, 사용량이 없어도 차단 상태다."""
+    # Arrange
+    del api_key
+    _seed(usage_store)
+    account = registry.get_account("acme")
+    assert account is not None
+    registry.put_account(
+        account.model_copy(update={"monthly_budget_usd": decimal.Decimal("0")}),
+        overwrite=True,
+    )
+
+    # Act
+    response = client.get(
+        "/analytics/dashboard",
+        params={"account_id": "acme"},
+        headers=admin_headers,
+    )
+
+    # Assert
+    entry = response.json()["budgets"]["entries"][0]
+    assert entry["limit_usd"] == 0.0
+    assert entry["blocked"] is True
+    assert entry["used_ratio"] == 1.0
+
+
+def test_dashboard_소진율높은순으로정렬된다(
+    client: testclient.TestClient,
+    admin_headers: dict[str, str],
+    api_key: str,
+    registry: repository.RegistryRepository,
+    usage_store: repository.UsageStore,
+) -> None:
+    """운영자가 먼저 봐야 하는 것이 위에 와야 한다."""
+    # Arrange
+    del api_key
+    _seed(usage_store)
+    account = registry.get_account("acme")
+    assert account is not None
+    registry.put_account(
+        account.model_copy(
+            update={"monthly_budget_usd": decimal.Decimal("1000")}
+        ),
+        overwrite=True,
+    )
+    team = registry.get_team("acme", "platform")
+    assert team is not None
+    registry.put_team(
+        team.model_copy(
+            update={"monthly_budget_usd": decimal.Decimal("0.0001")}
+        ),
+        overwrite=True,
+    )
+
+    # Act
+    response = client.get(
+        "/analytics/dashboard",
+        params={"account_id": "acme"},
+        headers=admin_headers,
+    )
+
+    # Assert
+    entries = response.json()["budgets"]["entries"]
+    ratios = [entry["used_ratio"] for entry in entries]
+    assert ratios == sorted(ratios, reverse=True), ratios
+    assert entries[0]["scope"] == "team"

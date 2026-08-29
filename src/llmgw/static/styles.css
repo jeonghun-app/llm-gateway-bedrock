@@ -1253,3 +1253,111 @@ code {
     padding: 1.25rem 1rem;
   }
 }
+
+/* ---------------------------------------------------------------------------
+ * 예산 소진
+ * 이 제품의 핵심 가치가 비용 통제라 예산이 화면 위쪽에 보여야 한다.
+ * ------------------------------------------------------------------------ */
+
+.budget-panel {
+  min-height: 3rem;
+}
+
+.budget-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(15rem, 1fr));
+  gap: 0.875rem;
+}
+
+.budget-card {
+  padding: 0.875rem 1rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--border-strong);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
+}
+
+/* 80% 주의, 100% 이상 위험. 예산을 넘기면 요청이 거부되므로 그 전에 알아야
+ * 한다. 색만으로 구분하지 않고 아래 문구로도 상태를 밝힌다. */
+.budget-ok {
+  border-left-color: var(--ok);
+}
+
+.budget-warn {
+  border-left-color: var(--yellow-800);
+}
+
+.budget-danger {
+  border-left-color: var(--danger);
+}
+
+.budget-head {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-width: 0;
+}
+
+.budget-label {
+  font-size: 0.8125rem;
+  font-weight: 500;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.budget-amount {
+  margin: 0.5rem 0 0.375rem;
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+
+.budget-track {
+  height: 0.375rem;
+  background: var(--gray-200);
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+@media (prefers-color-scheme: dark) {
+  .budget-track {
+    background: var(--gray-700);
+  }
+}
+
+.budget-fill {
+  height: 100%;
+  border-radius: 999px;
+  background: var(--ok);
+  transition: width 0.2s;
+}
+
+.budget-warn .budget-fill {
+  background: var(--yellow-800);
+}
+
+.budget-danger .budget-fill {
+  background: var(--danger);
+}
+
+.budget-note {
+  margin: 0.375rem 0 0;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.budget-danger .budget-note {
+  color: var(--danger);
+  font-weight: 500;
+}
+
+.budget-warning {
+  margin: 0.25rem 0 0;
+  font-size: 0.6875rem;
+  color: var(--yellow-800);
+}
