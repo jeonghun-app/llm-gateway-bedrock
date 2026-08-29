@@ -90,9 +90,15 @@ sequenceDiagram
   G-->>C: OpenAI 형식 응답
 ```
 
-사용량 원본 쓰기와 집계 갱신은 **하나의 트랜잭션**이다. 원본 쓰기에
-`attribute_not_exists` 조건이 걸려 있어, 같은 `X-Request-Id` 로 재시도하면
-트랜잭션 전체가 취소되고 집계가 두 번 더해지지 않는다.
+사용량 원본 쓰기와 집계 갱신은 **하나의 트랜잭션**이다. 정렬 키는 서버가
+요청마다 만드는 `usage_id` 이고, 같은 키를 `ClientRequestToken` 으로도 넘겨
+네트워크 재전송으로 같은 트랜잭션이 두 번 도착해도 집계가 두 번 더해지지
+않는다.
+
+클라이언트가 보낸 `X-Request-Id` 는 **집계 키가 아니다.** Bedrock 호출은 한
+번마다 실제 비용이 발생하므로, 같은 ID 를 재사용해도 호출 횟수만큼 기록된다.
+집계를 건너뛰면 월 예산 검사가 영원히 통과하고 청구 배분에서도 빠지기
+때문이다.
 
 **사용 중인 AWS 서비스**
 
@@ -137,7 +143,7 @@ IAM, Secrets Manager, CloudWatch, SNS, Application Auto Scaling 에 대한 생�
 
 ```bash
 git clone <이 리포지토리>
-cd LLMGateway
+cd llm-gateway-bedrock
 
 # 접속할 단말의 공인 IP 만 열고 배포한다.
 ./scripts/deploy.sh --allowed-cidr "$(curl -s https://checkip.amazonaws.com)/32"
@@ -166,7 +172,7 @@ cd LLMGateway
 4. 애플리케이션 스택 생성 (VPC, ALB, ECS, DynamoDB, IAM, 알람)
 5. `/healthz` 가 200 을 반환할 때까지 대기
 6. 데모 계정 2개·팀 4개·사용자 6명·키 6개 생성 후 실제 Bedrock 호출로 사용량 생성
-7. 스모크 테스트 (인증 경계, 스트리밍, 멱등성, 집계 축 4개, 비용 계산)
+7. 스모크 테스트 (인증 경계, 스트리밍, 집계 우회 방어, 집계 축 4개, 비용 계산)
 8. 접속 정보 출력
 
 소요 시간은 처음 배포 시 8~12분이다. 여러 번 실행해도 안전하다.
@@ -273,26 +279,31 @@ ADMIN_TOKEN="$(aws secretsmanager get-secret-value --region us-east-1 \
 
 ### 계정 · 팀 · 사용자 · 키 만들기
 
+기본 배포는 데모 계정(`acme`, `beta`)과 팀·사용자·키를 이미 만들어 둔다.
+아래 예시는 그것과 겹치지 않는 새 ID 를 쓴다. 데모 데이터 없이 시작하려면
+`./scripts/deploy.sh --no-seed` 로 배포한다. 이미 있는 ID 로 다시 만들면
+`409 already_exists` 가 돌아온다.
+
 ```bash
 # 계정 (월 예산 500 USD)
 curl -X POST "$GATEWAY_URL/admin/accounts" \
   -H "X-Admin-Token: $ADMIN_TOKEN" -H 'Content-Type: application/json' \
-  -d '{"account_id":"acme","name":"Acme Corp","monthly_budget_usd":500}'
+  -d '{"account_id":"contoso","name":"Contoso Ltd","monthly_budget_usd":500}'
 
 # 팀 (월 예산 200 USD)
-curl -X POST "$GATEWAY_URL/admin/accounts/acme/teams" \
+curl -X POST "$GATEWAY_URL/admin/accounts/contoso/teams" \
   -H "X-Admin-Token: $ADMIN_TOKEN" -H 'Content-Type: application/json' \
-  -d '{"team_id":"platform","name":"플랫폼팀","monthly_budget_usd":200}'
+  -d '{"team_id":"backend","name":"백엔드팀","monthly_budget_usd":200}'
 
 # 사용자
-curl -X POST "$GATEWAY_URL/admin/accounts/acme/users" \
+curl -X POST "$GATEWAY_URL/admin/accounts/contoso/users" \
   -H "X-Admin-Token: $ADMIN_TOKEN" -H 'Content-Type: application/json' \
-  -d '{"user_id":"alice","name":"김앨리스","team_id":"platform","monthly_budget_usd":100}'
+  -d '{"user_id":"jiwon","name":"김지원","team_id":"backend","monthly_budget_usd":100}'
 
 # API 키 (평문 키는 이 응답에서만 볼 수 있다)
-curl -X POST "$GATEWAY_URL/admin/accounts/acme/keys" \
+curl -X POST "$GATEWAY_URL/admin/accounts/contoso/keys" \
   -H "X-Admin-Token: $ADMIN_TOKEN" -H 'Content-Type: application/json' \
-  -d '{"user_id":"alice","name":"노트북","allowed_models":["amazon.nova-lite-v1:0"]}'
+  -d '{"user_id":"jiwon","name":"노트북","allowed_models":["amazon.nova-lite-v1:0"]}'
 ```
 
 예산은 계정·팀·사용자·키 네 단계에 각각 걸 수 있고, **하나라도 초과하면**
@@ -300,6 +311,13 @@ curl -X POST "$GATEWAY_URL/admin/accounts/acme/keys" \
 경우 예산 확인용 DynamoDB 조회도 발생하지 않는다.
 
 ### OpenAI SDK 로 호출
+
+OpenAI SDK 는 이 리포지토리의 의존성이 아니다. 애플리케이션 환경에 먼저
+설치한다.
+
+```bash
+pip install "openai==3.6.0"
+```
 
 ```python
 from openai import OpenAI
@@ -341,8 +359,10 @@ curl -X POST "$GATEWAY_URL/v1/chat/completions" \
   }'
 ```
 
-`X-Request-Id` 를 보내면 그 값이 **멱등성 키**가 된다. 타임아웃 후 같은 ID 로
-재시도해도 사용량이 두 번 집계되지 않는다.
+`X-Request-Id` 를 보내면 그 값이 **상관관계 ID** 가 되어 응답 헤더와 모든
+로그, 사용량 레코드에 그대로 남는다. 특정 요청을 로그에서 추적할 때 쓴다.
+집계 키는 아니다. Bedrock 호출은 한 번마다 실제 비용이 발생하므로, 같은
+ID 로 재시도하면 호출 횟수만큼 집계된다.
 
 ### 지원하는 엔드포인트
 
@@ -599,7 +619,8 @@ CloudWatch 커스텀 네임스페이스 `LLMGateway`:
 | `403 model_not_allowed` | 키의 `allowed_models` 에 없는 모델. `GET /v1/models` 로 사용 가능 목록 확인 |
 | `403` + "Bedrock 모델 액세스" | 콘솔 Bedrock → Model access 에서 모델 활성화 |
 | `429 insufficient_quota` | 계정/팀/사용자/키 중 하나가 월 예산 초과. 대시보드에서 어느 축인지 확인 |
-| `404 model_not_found` | 모델이 EOL 이거나 해당 리전에 없다. `GET /admin/models` 로 확인 |
+| `404 model_not_found` | 모델이 EOL 이거나 해당 리전에 없다(Bedrock `ResourceNotFoundException`). `GET /admin/models` 로 확인 |
+| `400 invalid_request` + `ValidationException` | 모델 ID 형식이 잘못됐다. `GET /v1/models` 의 ID 를 그대로 쓴다 |
 | 대시보드 비용이 0 또는 '단가 미등록 N건' 경고 | 단가 표에 없는 모델이다. `./.venv/bin/python scripts/sync_pricing.py` 로 점검한다. 현행 Claude 가 여기 해당한다 ([상세](docs/models-claude.md#5-비용-집계와-단가-표의-현재-한계)) |
 | 태스크가 계속 재시작 | `aws logs tail /ecs/llmgw-dev --since 15m` 확인. 배포 서킷 브레이커가 자동 롤백한다 |
 

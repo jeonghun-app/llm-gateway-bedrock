@@ -323,7 +323,7 @@ def test_build_chunk_finish_reason과usage는선택적이다() -> None:
     assert with_usage["usage"]["total_tokens"] == 3
 
 
-def test_build_model_list_owned_by는공급자접두어() -> None:
+def test_build_model_list_owned_by는리전접두어를제거한공급자() -> None:
     # Arrange / Act
     actual = translate.build_model_list(
         ["amazon.nova-lite-v1:0", "us.anthropic.claude-3-haiku"]
@@ -331,9 +331,11 @@ def test_build_model_list_owned_by는공급자접두어() -> None:
 
     # Assert
     assert actual["object"] == "list"
+    # 추론 프로파일의 `us.` 접두어를 공급자로 잡으면 Anthropic 모델이
+    # `us` 공급자로 분류된다.
     assert [entry["owned_by"] for entry in actual["data"]] == [
         "amazon",
-        "us",
+        "anthropic",
     ]
 
 

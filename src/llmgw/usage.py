@@ -4,8 +4,13 @@
 네 가지다.
 
 1. 토큰 수와 단가 표로 비용을 계산한다.
-2. 원본 레코드를 쓰고 집계를 갱신한다. 두 작업은 하나의 트랜잭션이라
-   같은 `request_id` 로 두 번 호출해도 집계가 중복되지 않는다.
+2. 원본 레코드를 쓰고 집계를 갱신한다. 두 작업은 하나의 트랜잭션이다.
+   저장소 키는 서버가 요청마다 만드는 `usage_id` 다. Bedrock 을 호출한
+   횟수만큼 비용이 실제로 발생하므로, 클라이언트가 `X-Request-Id` 를
+   재사용해도 집계를 건너뛰지 않는다. 건너뛰면 사용량이 집계에 반영되지
+   않아 월 예산 검사가 영원히 통과하고, 청구 배분에서도 빠진다.
+   같은 트랜잭션이 네트워크 재전송으로 두 번 도착하는 경우는
+   `ClientRequestToken` 이 막는다.
 3. EMF 메트릭을 발행한다.
 4. API 키의 마지막 사용 시각을 갱신한다(실패해도 무시).
 
@@ -35,8 +40,9 @@ class RecordOutcome:
 
     Attributes:
         record: 계산이 끝난 사용량 레코드.
-        newly_recorded: 저장소에 새로 기록됐는지 여부. 같은 `request_id` 가
-            이미 있었다면 `False`.
+        newly_recorded: 저장소에 새로 기록됐는지 여부. 서버가 만든
+            `usage_id` 는 정상 흐름에서 충돌하지 않으므로 보통 `True` 다.
+            `False` 는 같은 트랜잭션이 재전송된 경우다.
         persisted: 저장소 쓰기가 오류 없이 끝났는지 여부. `False` 면 집계에
             반영되지 않았다.
     """
@@ -57,6 +63,7 @@ class UsageRecorder:
         pricing_table: pricing.PricingTable,
         metrics: observability.MetricsEmitter,
         logger: observability.Logger,
+        id_factory: clock.IdFactory,
         track_key_last_used: bool = True,
     ) -> None:
         """기록기를 만든다.
@@ -67,6 +74,7 @@ class UsageRecorder:
             pricing_table: 단가 표.
             metrics: 메트릭 발행기.
             logger: 구조화 로거.
+            id_factory: 사용량 레코드 ID 생성기.
             track_key_last_used: 키의 마지막 사용 시각을 갱신할지 여부.
         """
         self._usage_store = usage_store
@@ -74,6 +82,7 @@ class UsageRecorder:
         self._pricing = pricing_table
         self._metrics = metrics
         self._logger = logger
+        self._id_factory = id_factory
         self._track_key_last_used = track_key_last_used
 
     def build_record(
@@ -94,7 +103,8 @@ class UsageRecorder:
 
         Args:
             principal: 인증된 호출 주체.
-            request_id: 요청 ID. 멱등성 키로 쓰인다.
+            request_id: 요청 상관관계 ID. 로그 추적에 쓰이며 저장소 키가
+                아니다.
             started_at: 요청 시작 시각.
             model_id: 요청 모델 ID.
             input_tokens: 입력 토큰 수.
@@ -116,6 +126,7 @@ class UsageRecorder:
                 extra={"model_id": model_id},
             )
         return domain.UsageRecord(
+            usage_id=self._id_factory.new_id(),
             request_id=request_id,
             timestamp=clock.to_iso(started_at),
             account_id=principal.account_id,
@@ -164,8 +175,8 @@ class UsageRecorder:
 
         if not newly_recorded and persisted:
             self._logger.info(
-                "이미 기록된 요청이다. 집계를 중복 반영하지 않는다",
-                extra={"request_id": record.request_id},
+                "같은 트랜잭션이 재전송됐다. 집계를 중복 반영하지 않는다",
+                extra={"usage_id": record.usage_id},
             )
 
         self._metrics.emit_request(

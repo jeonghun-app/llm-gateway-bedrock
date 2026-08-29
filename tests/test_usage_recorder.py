@@ -10,6 +10,7 @@ import pytest
 
 import conftest
 from llmgw import apikey
+from llmgw import clock
 from llmgw import domain
 from llmgw import observability
 from llmgw import pricing
@@ -184,6 +185,7 @@ def test_persist_저장실패시persisted는False이고예외를던지지않는�
         pricing_table=pricing_table,
         metrics=metrics,
         logger=logger,
+        id_factory=clock.UUID_ID_FACTORY,
     )
     record = _build(recorder)
 

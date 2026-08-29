@@ -182,12 +182,18 @@ def test_chat_completions_사용량이집계된다(
     assert totals["TOTAL"].cost_usd == decimal.Decimal("0.0000220000")
 
 
-def test_chat_completions_동일X_Request_Id재시도시집계가중복되지않는다(
+def test_chat_completions_동일X_Request_Id를재사용해도호출마다집계된다(
     client: testclient.TestClient,
     api_key: str,
     usage_store: repository.UsageStore,
 ) -> None:
-    """클라이언트 재시도가 비용을 두 번 계산하게 만들면 안 된다."""
+    """클라이언트가 지정한 요청 ID 로 집계를 건너뛸 수 없어야 한다.
+
+    Bedrock 호출은 한 번마다 실제 비용이 발생한다. 같은 `X-Request-Id` 로
+    기록을 건너뛰면 사용량이 집계에 반영되지 않아 월 예산 검사가 영원히
+    통과하고 청구 배분에서도 빠진다. 헤더 하나로 과금과 예산을 우회할 수
+    있으므로 호출 횟수만큼 집계해야 한다.
+    """
     # Arrange
     headers = {
         "Authorization": f"Bearer {api_key}",
@@ -205,12 +211,18 @@ def test_chat_completions_동일X_Request_Id재시도시집계가중복되지않
     # Assert
     assert first.status_code == 200
     assert second.status_code == 200
+    # 상관관계 ID 는 클라이언트가 보낸 값을 그대로 돌려준다.
+    assert first.headers["X-Request-Id"] == "retry-me"
+    assert second.headers["X-Request-Id"] == "retry-me"
     totals = usage_store.query_totals(
         "acme", domain.Granularity.DAY, "2026-08-23"
     )
     assert (
-        totals["TOTAL"].requests == 1
-    ), f"기대 1, 실제 {totals['TOTAL'].requests}"
+        totals["TOTAL"].requests == 2
+    ), f"기대 2, 실제 {totals['TOTAL'].requests}"
+    # 예산 검사가 읽는 축도 함께 늘어야 한다.
+    assert totals["USER#alice"].requests == 2
+    assert totals["TOTAL"].cost_usd == decimal.Decimal("0.0000440000")
 
 
 def test_chat_completions_요청ID가없으면매번새로집계된다(

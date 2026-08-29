@@ -1,8 +1,11 @@
 """사용량 저장소 테스트.
 
-가장 중요한 검증은 멱등성이다. 게이트웨이는 클라이언트가 같은
-`X-Request-Id` 로 재시도하거나 내부 재시도가 발생해도 집계를 두 번 더하지
-않아야 한다.
+가장 중요한 검증은 두 가지다.
+
+1. 같은 트랜잭션이 재전송되면(같은 `usage_id`) 집계를 두 번 더하지 않는다.
+2. 클라이언트가 같은 `X-Request-Id` 를 재사용해도 Bedrock 호출 횟수만큼
+   집계된다. 집계를 건너뛰면 월 예산 검사가 영원히 통과하고 청구 배분에서
+   빠지므로, 헤더 하나로 과금을 우회할 수 있게 된다.
 """
 
 from __future__ import annotations
@@ -46,11 +49,13 @@ def test_record_신규요청_원본과집계가함께기록된다(
     assert total.latency_ms_sum == 150
 
 
-def test_record_동일request_id_2회_집계가중복되지않는다(
+def test_record_동일usage_id_2회_집계가중복되지않는다(
     usage_store: repository.UsageStore,
 ) -> None:
     # Arrange
-    record = conftest.make_usage_record(request_id="req-dup")
+    record = conftest.make_usage_record(
+        usage_id="usage-dup", request_id="req-dup"
+    )
 
     # Act
     first = usage_store.record(record)
@@ -70,11 +75,13 @@ def test_record_동일request_id_2회_집계가중복되지않는다(
     ), f"토큰도 중복 합산되지 않아야 한다. 실제 {total.input_tokens}"
 
 
-def test_record_동일request_id_3회_원본레코드는1건이다(
+def test_record_동일usage_id_3회_원본레코드는1건이다(
     usage_store: repository.UsageStore,
 ) -> None:
     # Arrange
-    record = conftest.make_usage_record(request_id="req-triple")
+    record = conftest.make_usage_record(
+        usage_id="usage-triple", request_id="req-triple"
+    )
 
     # Act
     for _ in range(3):
@@ -83,6 +90,43 @@ def test_record_동일request_id_3회_원본레코드는1건이다(
     # Assert
     records = usage_store.list_records("acme", "2026-08-23")
     assert len(records) == 1, f"기대 1건, 실제 {len(records)}건"
+
+
+def test_record_같은request_id라도usage_id가다르면호출마다집계된다(
+    usage_store: repository.UsageStore,
+) -> None:
+    """클라이언트 헤더로 집계·예산을 우회할 수 없어야 한다.
+
+    `request_id` 는 클라이언트가 지정할 수 있는 상관관계 ID 다. 이것을
+    저장소 키로 쓰면 같은 값을 계속 보내는 것만으로 집계가 멈추고, 예산
+    검사가 집계를 읽으므로 월 한도가 영원히 걸리지 않는다.
+    """
+    # Arrange: 같은 클라이언트 요청 ID, 서로 다른 서버 생성 키
+    first_record = conftest.make_usage_record(
+        usage_id="usage-1", request_id="same-client-id"
+    )
+    second_record = conftest.make_usage_record(
+        usage_id="usage-2", request_id="same-client-id"
+    )
+
+    # Act
+    first = usage_store.record(first_record)
+    second = usage_store.record(second_record)
+
+    # Assert
+    assert first is True
+    assert second is True, "두 번째 호출도 기록돼야 한다"
+    total = usage_store.query_totals(
+        "acme", domain.Granularity.DAY, "2026-08-23"
+    )["TOTAL"]
+    assert (
+        total.requests == 2
+    ), f"호출 2회는 2건으로 집계돼야 한다. 실제 {total.requests}"
+    assert (
+        total.input_tokens == 2000
+    ), f"토큰도 2회분이어야 한다. 실제 {total.input_tokens}"
+    records = usage_store.list_records("acme", "2026-08-23")
+    assert len(records) == 2, f"원본도 2건이어야 한다. 실제 {len(records)}건"
 
 
 def test_record_모든축이집계된다(

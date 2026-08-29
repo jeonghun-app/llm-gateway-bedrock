@@ -1083,14 +1083,20 @@ class UsageStore:
     def record(self, usage: domain.UsageRecord) -> bool:
         """사용량을 기록하고 집계를 갱신한다.
 
-        같은 `request_id` 로 두 번 호출하면 두 번째는 아무것도 바꾸지 않고
-        `False` 를 반환한다.
+        Bedrock 호출은 한 번마다 실제 비용이 발생하므로, 호출이 있었다면
+        집계는 반드시 늘어야 한다. 그래서 저장소 키는 서버가 만든
+        `usage_id` 이고, 클라이언트가 보낸 `request_id` 로는 기록을 건너뛰지
+        않는다.
+
+        `ClientRequestToken` 을 함께 넘겨 네트워크 오류로 같은
+        `TransactWriteItems` 가 재전송되더라도 집계가 두 번 더해지지 않게
+        한다(DynamoDB 가 10분간 같은 토큰의 재요청을 멱등 처리한다).
 
         Args:
             usage: 기록할 사용량 레코드.
 
         Returns:
-            새로 기록되면 `True`, 이미 기록된 요청이면 `False`.
+            새로 기록되면 `True`. 같은 `usage_id` 가 이미 있으면 `False`.
 
         Raises:
             ClientError: 조건 실패 외의 DynamoDB 오류.
@@ -1098,7 +1104,10 @@ class UsageStore:
         transact_items = [self._usage_put_item(usage)]
         transact_items.extend(self._aggregate_update_items(usage))
         try:
-            self._client.transact_write_items(TransactItems=transact_items)
+            self._client.transact_write_items(
+                TransactItems=transact_items,
+                ClientRequestToken=usage.usage_id,
+            )
         except botocore.exceptions.ClientError as exc:
             if self._is_duplicate_cancellation(exc):
                 return False
@@ -1273,7 +1282,7 @@ class UsageStore:
         )
         item: _JsonDict = {
             "pk": usage_pk(usage.account_id, clock.day_key(moment)),
-            "sk": usage.request_id,
+            "sk": usage.usage_id,
             "ts": usage.timestamp,
             "request_id": usage.request_id,
             "account_id": usage.account_id,
@@ -1298,8 +1307,9 @@ class UsageStore:
                 "Item": {
                     name: _serialize(value) for name, value in item.items()
                 },
-                # 멱등성의 핵심. 같은 request_id 가 이미 있으면 트랜잭션
-                # 전체가 취소되어 집계도 중복 반영되지 않는다.
+                # 서버가 만든 usage_id 라 정상 흐름에서는 절대 충돌하지
+                # 않는다. 같은 키가 이미 있다는 것은 같은 트랜잭션이 두 번
+                # 적용되려는 상황이므로 막는다.
                 "ConditionExpression": "attribute_not_exists(sk)",
             }
         }

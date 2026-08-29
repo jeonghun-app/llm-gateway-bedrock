@@ -34,6 +34,21 @@ python3.13 -m venv .venv
 ./.venv/bin/python -m playwright install chromium
 ```
 
+셸 스크립트를 고칠 계획이면 `shellcheck` 도 필요하다. pip 로는 설치되지
+않으므로 OS 패키지 매니저를 쓴다.
+
+```bash
+# Debian/Ubuntu
+sudo apt-get install -y shellcheck
+# macOS
+brew install shellcheck
+# Amazon Linux 2023 / Fedora (EPEL 또는 소스 배포판 필요)
+sudo dnf install -y ShellCheck
+```
+
+설치할 수 없는 환경이라면 이 검사는 건너뛰고 PR 을 열어도 된다. CI 가
+`shellcheck scripts/*.sh` 를 실행해 같은 검사를 수행한다.
+
 유닛 테스트는 실제 AWS 를 호출하지 않는다. DynamoDB 는 `moto`, Bedrock 은
 `botocore.stub.Stubber` 로 대체하므로 자격증명 없이 전부 실행된다.
 
