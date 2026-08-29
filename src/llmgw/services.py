@@ -134,6 +134,7 @@ def build_services(settings: config.Settings) -> Services:
             pricing_table=pricing_table,
             metrics=metrics,
             logger=logger,
+            id_factory=clock_module.UUID_ID_FACTORY,
         ),
         analytics=analytics_module.AnalyticsService(
             usage_store=usage_store, registry=registry

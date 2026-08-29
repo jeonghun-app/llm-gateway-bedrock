@@ -46,6 +46,37 @@ _ERROR_MAP: dict[str, type[errors.GatewayError]] = {
     "ServiceUnavailableException": errors.UpstreamError,
 }
 
+# Converse API 로 호출할 수 없는 모델 계열. `list_foundation_models` 를
+# `byOutputModality=TEXT` 로 걸러도 재순위(rerank)·임베딩 모델이 함께
+# 나오고, 추론 프로파일 목록에는 이미지 생성 모델까지 섞인다. 이것들을
+# `/v1/models` 로 노출하면 클라이언트가 골라 쓴 뒤 Bedrock 이
+# "This action doesn't support the model" 로 400 을 낸다. Bedrock 이
+# Converse 지원 여부를 알려주는 필드를 제공하지 않아 계열로 판별한다.
+_NON_CONVERSE_MARKERS: tuple[str, ...] = (
+    "embed",
+    "rerank",
+    "stability.",
+    "stable-",
+    "-image",
+    "image-",
+    "canvas",
+    "reel",
+    "sonic",
+)
+
+
+def supports_converse(model_id: str) -> bool:
+    """모델 ID 가 Converse 로 호출 가능한 계열인지 판정한다.
+
+    Args:
+        model_id: 기반 모델 ID 또는 추론 프로파일 ID.
+
+    Returns:
+        Converse 로 호출할 수 있다고 판단되면 `True`.
+    """
+    lowered = model_id.lower()
+    return not any(marker in lowered for marker in _NON_CONVERSE_MARKERS)
+
 
 @dataclasses.dataclass(frozen=True)
 class ConverseResult:
@@ -349,7 +380,10 @@ class BedrockGateway:
         return error_class(f"{code}: {message}")
 
     def _load_model_ids(self) -> tuple[str, ...]:
-        """Bedrock 에서 모델 목록을 조회한다. 실패하면 빈 튜플."""
+        """Bedrock 에서 Converse 로 호출 가능한 모델 목록을 조회한다.
+
+        실패하면 빈 튜플을 반환한다.
+        """
         model_ids: set[str] = set()
         try:
             response = self._control.list_foundation_models(
@@ -357,7 +391,7 @@ class BedrockGateway:
             )
             for summary in response.get("modelSummaries", []):
                 model_id = summary.get("modelId")
-                if model_id:
+                if model_id and supports_converse(str(model_id)):
                     model_ids.add(str(model_id))
         except (
             botocore.exceptions.ClientError,
@@ -372,7 +406,10 @@ class BedrockGateway:
                     if profile.get("status") != "ACTIVE":
                         continue
                     profile_id = profile.get("inferenceProfileId")
-                    if profile_id:
+                    # 추론 프로파일도 걸러야 한다. 프로파일 목록에는 이미지
+                    # 생성 모델처럼 Converse 로 호출할 수 없는 것이 섞여
+                    # 들어온다.
+                    if profile_id and supports_converse(str(profile_id)):
                         model_ids.add(str(profile_id))
         except (
             botocore.exceptions.ClientError,

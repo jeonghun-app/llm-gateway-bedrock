@@ -13,6 +13,7 @@ import datetime
 import decimal
 import os
 import typing
+import uuid
 
 # moto 를 import 하기 전에 설정해야 효과가 있다. `setdefault` 를 쓰면 개발
 # 셸의 실제 임시 자격증명과 만료 시각을 물려받을 수 있으므로, 테스트
@@ -34,6 +35,7 @@ from llmgw import apikey  # noqa: E402
 from llmgw import app  # noqa: E402
 from llmgw import auth  # noqa: E402
 from llmgw import bedrock  # noqa: E402
+from llmgw import clock  # noqa: E402
 from llmgw import config  # noqa: E402
 from llmgw import domain  # noqa: E402
 from llmgw import observability  # noqa: E402
@@ -278,6 +280,7 @@ def usage_recorder(
         pricing_table=pricing_table,
         metrics=metrics,
         logger=logger,
+        id_factory=clock.UUID_ID_FACTORY,
     )
 
 
@@ -311,6 +314,7 @@ def analytics_service(
 
 def make_usage_record(
     *,
+    usage_id: str | None = None,
     request_id: str = "req-1",
     account_id: str = "acme",
     team_id: str = "platform",
@@ -328,6 +332,8 @@ def make_usage_record(
     """테스트용 사용량 레코드를 만든다.
 
     Args:
+        usage_id: 사용량 레코드 키. 생략하면 매번 새로 만든다. 같은
+            트랜잭션의 재전송을 재현하려면 같은 값을 명시한다.
         request_id: 요청 ID.
         account_id: 계정 ID.
         team_id: 팀 ID.
@@ -346,6 +352,7 @@ def make_usage_record(
         구성된 `UsageRecord`.
     """
     return domain.UsageRecord(
+        usage_id=usage_id if usage_id is not None else str(uuid.uuid4()),
         request_id=request_id,
         timestamp=timestamp,
         account_id=account_id,

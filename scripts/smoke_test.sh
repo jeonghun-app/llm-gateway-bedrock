@@ -181,7 +181,10 @@ else
         "${BASE_URL}/v1/chat/completions"
 
     echo
-    echo "7. 멱등성 (같은 X-Request-Id 2회)"
+    echo "7. 집계 우회 방어 (같은 X-Request-Id 2회)"
+    # 클라이언트가 지정한 X-Request-Id 로 집계를 건너뛸 수 있으면, 헤더를
+    # 고정하는 것만으로 월 예산과 청구 배분을 우회할 수 있다. Bedrock 을
+    # 두 번 불렀으면 두 건으로 기록돼야 한다.
     idem_id="smoke-idem-$(date -u +%s)"
     for _ in 1 2; do
         curl -s -o /dev/null --max-time 90 -X POST \
@@ -196,10 +199,10 @@ else
         "${BASE_URL}/analytics/requests?account_id=${ACCOUNT_ID}&date=${today}&limit=200" \
         | jq -r --arg rid "${idem_id}" \
             '[.data[] | select(.request_id == $rid)] | length')"
-    if [[ "${idem_count}" == "1" ]]; then
-        pass "중복 요청이 1건으로 기록됨"
+    if [[ "${idem_count}" == "2" ]]; then
+        pass "호출 2회가 2건으로 기록됨 (집계 우회 불가)"
     else
-        fail "멱등성 위반: 같은 request_id 가 ${idem_count}건 기록됐다"
+        fail "집계 우회 가능: 호출 2회가 ${idem_count}건으로 기록됐다"
     fi
 
     echo

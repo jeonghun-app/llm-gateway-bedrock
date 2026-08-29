@@ -17,6 +17,7 @@ from __future__ import annotations
 import typing
 
 from llmgw import errors
+from llmgw import pricing
 from llmgw import schemas
 
 # OpenAI 의 developer 역할은 system 과 같은 의미로 도입됐다.
@@ -275,8 +276,28 @@ def build_model_list(model_ids: typing.Sequence[str]) -> _JsonDict:
                 # OpenAI 스펙의 필수 필드다. Bedrock 은 모델 생성 시각을
                 # 제공하지 않아 0으로 채운다.
                 "created": 0,
-                "owned_by": model_id.split(".", 1)[0],
+                "owned_by": _model_owner(model_id),
             }
             for model_id in model_ids
         ],
     }
+
+
+def _model_owner(model_id: str) -> str:
+    """모델 ID 에서 공급자를 뽑는다.
+
+    추론 프로파일 ID 는 `us.amazon.nova-lite-v1:0` 처럼 리전 접두어가 앞에
+    붙는다. 첫 조각을 그대로 쓰면 공급자가 `us`/`global` 로 잡혀, 공급자별
+    그룹화가 Amazon·Anthropic 모델을 리전 이름으로 분류한다. 접두어를 먼저
+    제거한 뒤 공급자를 계산한다.
+
+    Args:
+        model_id: 모델 ID 또는 추론 프로파일 ID.
+
+    Returns:
+        공급자 이름. 판별할 수 없으면 빈 문자열.
+    """
+    normalized = pricing.normalize_model_id(model_id)
+    if not normalized:
+        return ""
+    return normalized.split(".", 1)[0]

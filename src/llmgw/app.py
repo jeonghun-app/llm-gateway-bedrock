@@ -135,21 +135,24 @@ def _register_middleware(
         started = time.perf_counter()
         try:
             response = await call_next(request)
+            elapsed_ms = int((time.perf_counter() - started) * 1000)
+            response.headers[_REQUEST_ID_HEADER] = request_id
+            # 로깅은 컨텍스트를 되돌리기 전에 해야 한다. reset 을 먼저
+            # 실행하면 이 줄에 correlation_id 가 붙지 않아, status_code 와
+            # duration_ms 를 가진 유일한 로그를 요청 ID 로 조회할 수 없다.
+            if request.url.path not in _QUIET_PATHS:
+                services.logger.info(
+                    "요청 처리 완료",
+                    extra={
+                        "method": request.method,
+                        "path": request.url.path,
+                        "status_code": response.status_code,
+                        "duration_ms": elapsed_ms,
+                    },
+                )
         finally:
             observability.reset_correlation_id(token)
 
-        elapsed_ms = int((time.perf_counter() - started) * 1000)
-        response.headers[_REQUEST_ID_HEADER] = request_id
-        if request.url.path not in _QUIET_PATHS:
-            services.logger.info(
-                "요청 처리 완료",
-                extra={
-                    "method": request.method,
-                    "path": request.url.path,
-                    "status_code": response.status_code,
-                    "duration_ms": elapsed_ms,
-                },
-            )
         return response
 
 

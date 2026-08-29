@@ -195,11 +195,16 @@ class Principal(_Base):
 class UsageRecord(_Base):
     """단일 게이트웨이 요청의 사용량 레코드.
 
-    `request_id` 는 게이트웨이가 생성하며, 같은 값으로 두 번 기록해도
-    저장소에는 한 건만 남는다. 자세한 보장 방식은 `usage` 모듈을 참고한다.
+    `usage_id` 는 게이트웨이가 요청마다 새로 만드는 저장소 키다. Bedrock
+    호출은 그때마다 실제 비용이 발생하므로, 사용량은 언제나 한 건씩
+    기록되어야 한다. `request_id` 는 클라이언트가 지정할 수 있는 추적용
+    상관관계 ID 이며 키로 쓰지 않는다. 자세한 이유는 `usage` 모듈을
+    참고한다.
 
     Attributes:
-        request_id: 요청 식별자. 멱등성 키로도 쓰인다.
+        usage_id: 사용량 레코드 식별자. 서버가 요청마다 생성한다.
+        request_id: 요청 상관관계 ID. 클라이언트의 `X-Request-Id` 가 있으면
+            그 값이고, 없으면 서버가 만든다. 로그 추적용이다.
         timestamp: 요청 시작 시각(ISO-8601 UTC).
         account_id: 계정 ID.
         team_id: 팀 ID.
@@ -217,6 +222,7 @@ class UsageRecord(_Base):
             0으로 기록되므로 대시보드에서 과소 집계를 인지할 수 있다.
     """
 
+    usage_id: str
     request_id: str
     timestamp: str
     account_id: str
