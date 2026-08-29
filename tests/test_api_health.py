@@ -200,6 +200,41 @@ def test_대시보드정적파일이서빙된다(
     assert "text/html" in response.headers["content-type"]
 
 
+def test_대시보드애셋은재검증을강제한다(
+    client: testclient.TestClient,
+) -> None:
+    """배포 후에도 브라우저가 옛 CSS/JS 를 쓰면 화면이 바뀌지 않는다.
+
+    Cache-Control 이 없으면 브라우저가 휴리스틱 캐싱을 적용해 옛 애셋을
+    계속 재사용한다. 실제로 배포했는데 디자인이 그대로인 문제가 여기서
+    나왔다. `no-cache` 로 매번 재검증하게 만든다(ETag 로 304 가 돌아가므로
+    전송량은 늘지 않는다).
+    """
+    # Arrange / Act
+    for path in ("/ui/", "/ui/styles.css", "/ui/app.js"):
+        response = client.get(path)
+
+        # Assert
+        assert response.status_code == 200, path
+        assert (
+            response.headers.get("cache-control") == "no-cache"
+        ), f"{path} 에 재검증 헤더가 없다"
+
+
+def test_API응답에는캐시금지헤더를붙이지않는다(
+    client: testclient.TestClient,
+) -> None:
+    """UI 외 경로는 기존 캐시 동작을 바꾸지 않는다."""
+    # Arrange / Act
+    response = client.get("/healthz")
+
+    # Assert
+    assert response.status_code == 200
+    assert "cache-control" not in {
+        name.lower() for name in response.headers
+    }
+
+
 def test_DynamoDB테이블없음_503이고AWS코드를알려준다(
     app_services: services_module.Services,
 ) -> None:

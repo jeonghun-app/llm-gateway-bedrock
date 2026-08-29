@@ -45,6 +45,10 @@ _STATIC_DIR = pathlib.Path(__file__).resolve().parent / "static"
 # 로그 대부분을 차지하고 CloudWatch Logs 비용만 늘린다.
 _QUIET_PATHS = frozenset({"/healthz"})
 
+# 대시보드 정적 애셋 경로. 배포 후에도 브라우저가 옛 CSS/JS 를 쓰지 않도록
+# 재검증을 강제한다.
+_UI_PATH_PREFIX = "/ui"
+
 _DESCRIPTION = """
 Amazon Bedrock 앞단의 OpenAI 호환 게이트웨이.
 
@@ -137,6 +141,13 @@ def _register_middleware(
             response = await call_next(request)
             elapsed_ms = int((time.perf_counter() - started) * 1000)
             response.headers[_REQUEST_ID_HEADER] = request_id
+            # 대시보드 애셋은 항상 재검증하게 만든다. Cache-Control 이 없으면
+            # 브라우저가 휴리스틱 캐싱으로 옛 CSS/JS 를 계속 쓰고, 배포해도
+            # 화면이 바뀌지 않는다. `no-cache` 는 캐시 금지가 아니라 "쓰기
+            # 전에 물어봐라" 라서, 내용이 그대로면 ETag 로 304 가 돌아가
+            # 전송량은 늘지 않는다.
+            if request.url.path.startswith(_UI_PATH_PREFIX):
+                response.headers["Cache-Control"] = "no-cache"
             # 로깅은 컨텍스트를 되돌리기 전에 해야 한다. reset 을 먼저
             # 실행하면 이 줄에 correlation_id 가 붙지 않아, status_code 와
             # duration_ms 를 가진 유일한 로그를 요청 ID 로 조회할 수 없다.
