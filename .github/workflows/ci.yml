@@ -56,16 +56,42 @@ jobs:
 
       - name: 유닛 테스트
         run: |
-          pytest --cov=llmgw --cov-report=term-missing \
+          pytest -m "not browser" \
+                 --cov=llmgw --cov-report=term-missing \
                  --cov-report=xml --cov-fail-under=85
 
       - name: 커버리지 업로드
-        uses: actions/upload-artifact@4cec3d8aa04e39d1a68397b6f1e5f7643fed6a1d # v4.6.1
+        uses: actions/upload-artifact@4cec3d8aa04e39d1a68397de0c4cd6fb9dce8ec1 # v4.6.1
         if: always()
         with:
           name: coverage
           path: coverage.xml
           retention-days: 7
+
+  browser:
+    name: Chromium 관리 UI 검증
+    runs-on: ubuntu-24.04
+    steps:
+      - name: 소스 체크아웃
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Python 3.13 설치
+        uses: actions/setup-python@42375524e23c412d93fb67b49958b491fce71c38 # v5.4.0
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: requirements-dev.txt
+
+      - name: 개발 의존성 설치
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+
+      - name: Chromium 설치
+        run: python -m playwright install --with-deps chromium
+
+      - name: 관리 UI 브라우저 테스트
+        run: pytest -m browser tests/test_ui_playwright.py
 
   infra:
     name: IaC 와 스크립트 검증
@@ -115,7 +141,7 @@ jobs:
         uses: docker/setup-buildx-action@b5ca514318bd6ebac0fb2aedd5d36ec1b5c232a2 # v3.10.0
 
       - name: 이미지 빌드
-        uses: docker/build-push-action@471d1dc4e07e5cdedd4c2171b7c117bb4d92e5b5 # v6.15.0
+        uses: docker/build-push-action@471d1dc4e07e5cdedd4c2171150001c434f0b7a4 # v6.15.0
         with:
           context: .
           push: false

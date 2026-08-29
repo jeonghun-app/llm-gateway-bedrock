@@ -188,6 +188,15 @@ cd LLMGateway
 # 허용 모델을 좁힌 기본 정책
 ./scripts/deploy.sh --allowed-cidr 203.0.113.10/32 \
   --allowed-models "amazon.nova-lite-v1:0,amazon.nova-pro-v1:0"
+
+# 게이트웨이는 서울에, Bedrock 호출은 us-east-1 로 (모델 가용성 차이 대응)
+./scripts/deploy.sh --allowed-cidr 203.0.113.10/32 \
+  --region ap-northeast-2 --bedrock-region us-east-1
+
+# IAM 을 특정 모델로 좁히고 usage 보존 기간을 30일로
+./scripts/deploy.sh --allowed-cidr 203.0.113.10/32 \
+  --allowed-model-arn "arn:aws:bedrock:*::foundation-model/amazon.nova-*" \
+  --usage-ttl-days 30
 ```
 
 전체 옵션은 `./scripts/deploy.sh --help` 로 확인한다.
@@ -418,18 +427,21 @@ docker run --rm -p 8080:8080 \
 ## 테스트
 
 유닛 테스트는 실제 AWS 를 호출하지 않는다. DynamoDB 는 `moto`, Bedrock 은
-`botocore.stub.Stubber` 와 대역 객체로 대체한다. 대시보드 차트와 관리 UI 는
-`tests/js/` 의 Node 하네스로 검증하며, Node 가 없으면 해당 테스트만 건너뛴다.
+`botocore.stub.Stubber` 와 대역 객체로 대체한다. 대시보드 차트와 관리 UI의
+빠른 회귀 검증에는 `tests/js/`의 Node 하네스를 쓴다. 핵심 관리 UI 흐름과
+데스크톱·모바일 레이아웃은 Python Playwright와 실제 Chromium으로 별도
+검증한다.
 
 ```bash
-# 전체 (382개, 약 55초)
-./.venv/bin/python -m pytest
+# Chromium 설치 (최초 한 번)
+./.venv/bin/python -m playwright install chromium
 
-# 커버리지
-./.venv/bin/python -m pytest --cov=llmgw --cov-report=term-missing
+# 유닛·Node 하네스 및 커버리지
+./.venv/bin/python -m pytest -m "not browser" \
+  --cov=llmgw --cov-report=term-missing
 
-# 특정 파일
-./.venv/bin/python -m pytest tests/test_usage_store.py -v
+# 실제 브라우저 관리 UI
+./.venv/bin/python -m pytest -m browser tests/test_ui_playwright.py
 ```
 
 커밋 전 전체 검증:
@@ -439,7 +451,8 @@ docker run --rm -p 8080:8080 \
 ./.venv/bin/black src tests scripts
 ./.venv/bin/ruff check src tests scripts
 ./.venv/bin/mypy
-./.venv/bin/python -m pytest
+./.venv/bin/python -m pytest -m "not browser"
+./.venv/bin/python -m pytest -m browser tests/test_ui_playwright.py
 ./.venv/bin/cfn-lint infra/*.yaml
 shellcheck scripts/*.sh
 ./.venv/bin/python scripts/export_openapi.py   # 스펙 갱신
@@ -640,6 +653,8 @@ CloudWatch 커스텀 네임스페이스 `LLMGateway`:
 | [`docs/models-claude.md`](docs/models-claude.md) | Claude 모델 연동. 추론 프로파일 필수 조건, 단가 갭, 미지원 기능 |
 | [`docs/bedrock-endpoints.md`](docs/bedrock-endpoints.md) | `bedrock-runtime` vs `bedrock-mantle`, 네이티브 OpenAI API 와의 관계 |
 | [`SECURITY.md`](SECURITY.md) | 시크릿 관리, 접근 통제, IAM, 데이터 보호 |
+| [`CONTRIBUTING.md`](CONTRIBUTING.md) | 개발 환경, 검증 명령, 커밋·PR 절차 |
+| [`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md) | 기여자 행동 규범 (Contributor Covenant 2.1) |
 | [`docs/runbook.md`](docs/runbook.md) | 배포·롤백·알람 대응·프로덕션 전환 절차 |
 | [`docs/adr/0001-compute-ecs-fargate.md`](docs/adr/0001-compute-ecs-fargate.md) | 컴퓨트로 Fargate 를 고른 이유 |
 | [`docs/adr/0002-datastore-dynamodb.md`](docs/adr/0002-datastore-dynamodb.md) | DynamoDB 선택과 단일 트랜잭션 집계 설계 |

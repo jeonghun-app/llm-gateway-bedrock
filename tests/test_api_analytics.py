@@ -323,9 +323,7 @@ def test_accounts_계정별합계를반환한다(
 ) -> None:
     # Arrange
     conftest.seed_account_tree(registry)
-    registry.put_account(
-        domain.Account(account_id="beta", name="Beta"), overwrite=True
-    )
+    registry.put_account(domain.Account(account_id="beta", name="Beta"))
     _seed(usage_store)
 
     # Act

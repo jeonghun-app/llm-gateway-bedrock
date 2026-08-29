@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 보안 취약점 신고
+    url: https://github.com/security/advisories
+    about: 취약점은 공개 이슈로 올리지 말고 SECURITY.md 의 비공개 절차를 따른다.
+  - name: 질문과 토론
+    about: 버그나 기능 제안이 아닌 사용법 질문은 이슈 대신 여기서.
+    url: https://github.com/

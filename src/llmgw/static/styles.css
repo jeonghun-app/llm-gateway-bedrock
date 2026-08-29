@@ -465,6 +465,10 @@ button.danger:hover {
   z-index: 100;
 }
 
+.modal-root[hidden] {
+  display: none;
+}
+
 .modal {
   background: var(--surface);
   border: 1px solid var(--border);

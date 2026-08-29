@@ -366,7 +366,14 @@ global.sessionStorage = (() => {
   };
 })();
 
-global.navigator = { clipboard: { writeText: () => Promise.resolve() } };
+// Node 22+ 는 global.navigator 를 getter 전용 내장 프로퍼티로 노출한다.
+// 직접 할당하면 TypeError 가 나므로 defineProperty 로 재정의한다. 하위
+// 버전(내장 navigator 가 없음)에서도 동일하게 동작한다.
+Object.defineProperty(global, 'navigator', {
+  value: { clipboard: { writeText: () => Promise.resolve() } },
+  configurable: true,
+  writable: true,
+});
 
 global.Intl = global.Intl; // 그대로 사용.
 global.window = {};

@@ -1,0 +1,30 @@
+name: 기능 제안
+description: 새 기능이나 개선을 제안한다
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: 해결하려는 문제
+      description: 어떤 상황에서 무엇이 불편한지. 해결책이 아니라 문제를 적는다.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: 제안하는 방향
+      description: 생각하는 해결책이 있다면 적는다. 대안도 함께.
+    validations:
+      required: false
+  - type: textarea
+    id: scope
+    attributes:
+      label: 영향 범위
+      description: API·데이터 모델·IaC·보안에 영향을 주는가. 하위 호환이 깨지는가.
+    validations:
+      required: false
+  - type: markdown
+    attributes:
+      value: |
+        설계 배경은 [docs/adr/](../tree/main/docs/adr) 를 참고한다. 큰 변경은
+        구현 전에 이 이슈에서 방향을 맞춘 뒤 진행하기를 권한다.
