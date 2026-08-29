@@ -84,6 +84,30 @@ class Settings(pydantic_settings.BaseSettings):
 
     request_timeout_seconds: int = pydantic.Field(default=300, ge=1, le=900)
 
+    # -- 외부 인증(OIDC) ---------------------------------------------------
+    # 발급자·청중·클레임 매핑은 계정별 설정(`AccountAuthConfig`)에만 둔다.
+    # 전역과 계정별 두 곳에 같은 설정이 있으면 어느 쪽이 적용됐는지 추적하기
+    # 어렵고, 한쪽만 고쳐 사고가 난다.
+    #
+    # 여기 있는 값은 계정 경계를 넘는 것뿐이다.
+    #
+    # 이 그룹을 가진 토큰은 모든 계정을 관리할 수 있다(공유 관리 토큰과
+    # 동등). 비어 있으면 플랫폼 관리자를 토큰으로 부여할 수 없고, 계정별
+    # `admin_groups` 로 자기 계정만 관리하게 된다.
+    oidc_platform_admin_groups: str = ""
+
+    @property
+    def oidc_platform_admin_group_list(self) -> tuple[str, ...]:
+        """플랫폼 관리자로 인정할 그룹 목록.
+
+        Returns:
+            공백이 제거된 튜플. 설정이 비어 있으면 빈 튜플.
+        """
+        raw = self.oidc_platform_admin_groups.strip()
+        if not raw:
+            return ()
+        return tuple(item.strip() for item in raw.split(",") if item.strip())
+
     @property
     def effective_bedrock_region(self) -> str:
         """Bedrock 호출에 실제로 사용할 리전을 반환한다."""

@@ -1,21 +1,25 @@
 # 자동 생성 파일. 직접 편집하지 않는다.
 # 재생성: ./scripts/lock_requirements.sh
-# python: Python 3.13.14
+# python: Python 3.13.15
 annotated-doc==0.0.5
 annotated-types==0.8.0
 anyio==4.14.2
 aws_lambda_powertools==3.34.0
 boto3==1.43.78
 botocore==1.43.78
-click==8.4.2
+cffi==2.1.1
+click==8.5.0
+cryptography==50.0.1
 fastapi==0.141.1
 h11==0.16.0
 httptools==0.8.0
 idna==3.19
 jmespath==1.1.0
+pycparser==3.0
 pydantic-settings==2.15.0
 pydantic==2.13.4
 pydantic_core==2.46.4
+PyJWT==2.12.1
 python-dateutil==2.9.0.post0
 python-dotenv==1.2.3
 s3transfer==0.19.2

@@ -23,6 +23,176 @@ class EntityStatus(enum.StrEnum):
     DISABLED = "disabled"
 
 
+class AdminScope(enum.StrEnum):
+    """관리 권한 범위.
+
+    `PLATFORM` 은 모든 계정을 다룰 수 있고, `ACCOUNT` 는 자신에게 매핑된
+    계정 하나만 다룰 수 있다. 공유 관리 토큰은 항상 `PLATFORM` 이다.
+    """
+
+    PLATFORM = "platform"
+    ACCOUNT = "account"
+
+
+class AdminAuthKind(enum.StrEnum):
+    """관리 API 인증 방식."""
+
+    SHARED_TOKEN = "shared_token"
+    OIDC = "oidc"
+
+
+class _Base(pydantic.BaseModel):
+    """공통 설정을 가진 모델 기반 클래스."""
+
+    model_config = pydantic.ConfigDict(
+        extra="forbid",
+        str_strip_whitespace=True,
+        frozen=True,
+    )
+
+
+class AdminPrincipal(_Base):
+    """관리 API 를 호출한 주체.
+
+    공유 관리 토큰 하나로는 누가 무엇을 했는지 남지 않고 권한을 좁힐 수도
+    없다. OIDC 로 들어온 경우 실제 사람의 식별자와 범위가 채워진다.
+
+    Attributes:
+        kind: 인증 방식.
+        subject: 주체 식별자. 공유 토큰이면 고정 문자열, OIDC 면 사용자
+            식별자(이메일 또는 `sub`).
+        scope: 권한 범위.
+        account_id: `ACCOUNT` 범위일 때 관리할 수 있는 계정 ID.
+        groups: OIDC 토큰에서 읽은 그룹 목록. 감사에 쓴다.
+    """
+
+    kind: AdminAuthKind
+    subject: str
+    scope: AdminScope
+    account_id: str = ""
+    groups: tuple[str, ...] = ()
+
+    def can_manage(self, account_id: str) -> bool:
+        """지정한 계정을 관리할 수 있는지 여부.
+
+        Args:
+            account_id: 대상 계정 ID.
+
+        Returns:
+            관리 가능하면 `True`.
+        """
+        if self.scope is AdminScope.PLATFORM:
+            return True
+        return bool(account_id) and account_id == self.account_id
+
+
+class AccountAuthConfig(_Base):
+    """계정별 외부 인증(OIDC) 설정.
+
+    고객이 이미 쓰는 인증 서버(Amazon Cognito, Okta, Azure AD, Google 등)를
+    계정 단위로 붙인다. 발급자(`issuer`)로 토큰이 어느 계정 것인지 판별하므로
+    발급자는 계정 간에 겹칠 수 없다.
+
+    Attributes:
+        account_id: 소속 계정 ID.
+        issuer: OIDC 발급자 URL. 토큰의 `iss` 와 정확히 일치해야 한다.
+        jwks_url: JWKS 문서 URL. 비우면 발급자에서 표준 경로를 만든다.
+        audience: 허용 클라이언트 ID. 쉼표로 구분한다. 비우면 청중을
+            검사하지 않는다.
+        user_claim: 사용자 ID 로 쓸 클레임 이름. 비어 있으면 `sub` 를 쓴다.
+        team_claim: 팀 ID 로 쓸 클레임 이름. 없으면 팀 없이 동작한다.
+        groups_claim: 그룹 목록 클레임 이름. Cognito 는 `cognito:groups` 다.
+        admin_groups: 이 계정의 관리자로 인정할 그룹. 쉼표로 구분한다.
+            해당 그룹을 가진 사용자는 관리 토큰 없이 이 계정을 관리한다.
+        auto_provision: 토큰은 유효하지만 사용자가 레지스트리에 없을 때 자동
+            생성할지 여부. 기본은 끈다(fail-closed).
+        provision_allowed_models: 자동 생성된 사용자의 키에 적용할 허용 모델.
+            쉼표로 구분한다.
+        provision_budget_usd: 자동 생성된 사용자의 월 예산. `None` 이면
+            무제한.
+        status: 활성 상태. 비활성이면 이 계정의 OIDC 인증을 즉시 차단한다.
+        created_at: 생성 시각(ISO-8601 UTC).
+        updated_at: 수정 시각(ISO-8601 UTC).
+    """
+
+    account_id: str = pydantic.Field(pattern=r"^[a-z0-9][a-z0-9-]{1,63}$")
+    issuer: str = pydantic.Field(min_length=8, max_length=512)
+    jwks_url: str = pydantic.Field(default="", max_length=512)
+    audience: str = pydantic.Field(default="", max_length=512)
+    user_claim: str = pydantic.Field(default="email", max_length=64)
+    team_claim: str = pydantic.Field(default="", max_length=64)
+    groups_claim: str = pydantic.Field(default="cognito:groups", max_length=64)
+    admin_groups: str = pydantic.Field(default="", max_length=512)
+    auto_provision: bool = False
+    provision_allowed_models: str = pydantic.Field(default="", max_length=1024)
+    provision_budget_usd: decimal.Decimal | None = pydantic.Field(
+        default=None, ge=0
+    )
+    status: EntityStatus = EntityStatus.ACTIVE
+    created_at: str = ""
+    updated_at: str = ""
+
+    @pydantic.model_validator(mode="after")
+    def _require_budget_when_auto_provisioning(self) -> AccountAuthConfig:
+        """자동 생성을 켰으면 예산을 반드시 지정하게 한다.
+
+        `auto_provision` 은 IdP 에 계정이 있는 사람을 그대로 게이트웨이
+        사용자로 만든다. 예산이 없으면 그 사용자는 무제한으로 Bedrock 을
+        호출할 수 있고, 비용은 계정 소유자가 부담한다. 실수 한 번이 곧
+        청구서로 오므로 설정 단계에서 막는다.
+
+        Returns:
+            검증된 자기 자신.
+
+        Raises:
+            ValueError: 자동 생성이 켜져 있는데 예산이 없는 경우.
+        """
+        if self.auto_provision and self.provision_budget_usd is None:
+            raise ValueError(
+                "auto_provision 을 켜면 provision_budget_usd 를 지정해야"
+                " 한다. 예산이 없으면 자동 생성된 사용자가 무제한으로"
+                " 호출할 수 있다."
+            )
+        return self
+
+    @property
+    def audience_list(self) -> tuple[str, ...]:
+        """허용 클라이언트 ID 튜플."""
+        return _split_csv(self.audience)
+
+    @property
+    def admin_group_list(self) -> tuple[str, ...]:
+        """관리자 그룹 튜플."""
+        return _split_csv(self.admin_groups)
+
+    @property
+    def provision_model_list(self) -> tuple[str, ...]:
+        """자동 생성 사용자에게 줄 허용 모델 튜플."""
+        return _split_csv(self.provision_allowed_models)
+
+    @property
+    def effective_jwks_url(self) -> str:
+        """JWKS 문서 URL. 비어 있으면 발급자에서 표준 경로를 만든다."""
+        if self.jwks_url:
+            return self.jwks_url
+        return f"{self.issuer.rstrip('/')}/.well-known/jwks.json"
+
+
+def _split_csv(raw: str) -> tuple[str, ...]:
+    """쉼표 구분 문자열을 공백 제거한 튜플로 바꾼다.
+
+    Args:
+        raw: 쉼표로 구분된 문자열.
+
+    Returns:
+        빈 항목이 제거된 튜플.
+    """
+    stripped = raw.strip()
+    if not stripped:
+        return ()
+    return tuple(item.strip() for item in stripped.split(",") if item.strip())
+
+
 class Granularity(enum.StrEnum):
     """집계 시간 단위."""
 
@@ -41,16 +211,6 @@ class BreakdownDimension(enum.StrEnum):
     USER = "user"
     MODEL = "model"
     KEY = "key"
-
-
-class _Base(pydantic.BaseModel):
-    """공통 설정을 가진 모델 기반 클래스."""
-
-    model_config = pydantic.ConfigDict(
-        extra="forbid",
-        str_strip_whitespace=True,
-        frozen=True,
-    )
 
 
 class Account(_Base):
