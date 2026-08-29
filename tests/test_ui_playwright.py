@@ -100,6 +100,8 @@ class _ApiStub:
                 "last_used_at": "",
             }
         ]
+        # 계정별 외부 인증 설정. 처음에는 연결되지 않은 상태다.
+        self.auth_config: _JsonDict | None = None
         self.calls: list[tuple[str, str, _JsonDict | None]] = []
         self._failure: tuple[str, str, int, str] | None = None
 
@@ -211,6 +213,56 @@ class _ApiStub:
                     "api_key": "sk-llmgw-test-PLAINTEXT-ROTATED",
                 },
             )
+            return
+
+        if path.endswith("/auth") and method == "GET":
+            if self.auth_config is None:
+                self._respond(
+                    route, 200, {"account_id": "acme", "configured": False}
+                )
+            else:
+                self._respond(
+                    route, 200, {**self.auth_config, "configured": True}
+                )
+            return
+
+        if path.endswith("/auth") and method == "PUT":
+            body = self._request_body(request) or {}
+            self.auth_config = {
+                "account_id": "acme",
+                "issuer": body.get("issuer", ""),
+                "jwks_url": body.get("jwks_url", ""),
+                "effective_jwks_url": (
+                    body.get("jwks_url")
+                    or body.get("issuer", "") + "/.well-known/jwks.json"
+                ),
+                "audience": body.get("audience", ""),
+                "user_claim": body.get("user_claim", "email"),
+                "team_claim": body.get("team_claim", ""),
+                "groups_claim": body.get("groups_claim", "cognito:groups"),
+                "admin_groups": body.get("admin_groups", ""),
+                "auto_provision": bool(body.get("auto_provision")),
+                "provision_allowed_models": body.get(
+                    "provision_allowed_models", ""
+                ),
+                "provision_budget_usd": body.get("provision_budget_usd"),
+                "status": "active",
+                "created_at": "2026-08-29T00:00:00Z",
+                "updated_at": "2026-08-29T00:00:00Z",
+            }
+            self._respond(route, 200, self.auth_config)
+            return
+
+        if path.endswith("/auth/status") and method == "POST":
+            body = self._request_body(request) or {}
+            assert self.auth_config is not None
+            self.auth_config["status"] = body.get("status", "active")
+            self._respond(route, 200, self.auth_config)
+            return
+
+        if path.endswith("/auth") and method == "DELETE":
+            self.auth_config = None
+            self._respond(route, 204, None)
             return
 
         if path == "/analytics/dashboard" and method == "GET":
@@ -551,3 +603,49 @@ def test_데스크톱과모바일기본레이아웃이뷰포트를넘지않는�
         assert session.page_errors == []
     finally:
         session.close()
+
+
+def test_인증연동탭에서OIDC설정을저장하고차단한다(ui: _UiSession) -> None:
+    """고객이 자기 IdP 를 UI 에서 붙이고 즉시 차단할 수 있어야 한다.
+
+    관리 토큰 하나로만 관리하던 구조에서, 계정별 인증 연동으로 넘어가는
+    흐름이 화면에서 실제로 동작하는지 확인한다.
+    """
+    page = ui.page
+    page.locator("#admin-token").fill(_ADMIN_TOKEN)
+    # 인증 설정은 계정 단위라 계정을 먼저 골라야 한다.
+    page.locator("#refresh-button").click()
+    sync_api.expect(page.locator("#account-select")).to_have_value("acme")
+    page.locator("#view-manage").click()
+    page.locator("#mtab-auth").click()
+
+    # 아직 연결되지 않은 상태를 안내해야 한다.
+    sync_api.expect(
+        page.get_by_role("button", name="인증 서버 연결", exact=True)
+    ).to_be_visible()
+
+    page.get_by_role("button", name="인증 서버 연결", exact=True).click()
+    modal = page.get_by_role("dialog")
+    sync_api.expect(modal).to_be_visible()
+    page.locator("#modal-issuer").fill(
+        "https://cognito-idp.us-east-1.amazonaws.com/us-east-1_UI"
+    )
+    page.locator("#modal-audience").fill("ui-client")
+    page.locator("#modal-admin_groups").fill("acme-admins")
+    page.get_by_role("button", name="저장", exact=True).click()
+
+    # 저장 후 표에 발급자와 활성 배지가 보여야 한다.
+    sync_api.expect(
+        page.get_by_text(
+            "https://cognito-idp.us-east-1.amazonaws.com/us-east-1_UI",
+            exact=True,
+        )
+    ).to_be_visible()
+    sync_api.expect(page.get_by_text("활성", exact=True)).to_be_visible()
+    sync_api.expect(page.get_by_text("acme-admins")).to_be_visible()
+
+    # 즉시 차단이 동작해야 한다.
+    page.get_by_role("button", name="즉시 차단", exact=True).click()
+    sync_api.expect(page.get_by_text("차단됨", exact=True)).to_be_visible()
+
+    assert ui.page_errors == []
