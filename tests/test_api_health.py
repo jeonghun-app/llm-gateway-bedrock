@@ -230,9 +230,7 @@ def test_API응답에는캐시금지헤더를붙이지않는다(
 
     # Assert
     assert response.status_code == 200
-    assert "cache-control" not in {
-        name.lower() for name in response.headers
-    }
+    assert "cache-control" not in {name.lower() for name in response.headers}
 
 
 def test_DynamoDB테이블없음_503이고AWS코드를알려준다(
