@@ -19,7 +19,6 @@ from llmgw import apikey
 from llmgw import clock
 from llmgw import domain
 from llmgw import errors
-from llmgw import observability
 from llmgw import schemas
 from llmgw import services as services_module
 
@@ -836,8 +835,8 @@ def rotate_api_key(
     중간 실패로 두 키가 동시에 유효해지는 상황을 막는다.
 
     이 엔드포인트는 HTTP 수준에서 멱등하지 않다. 응답을 못 받아 다시 호출하면
-    또 다른 새 평문 키가 발급된다. 상관 ID 를 트랜잭션 토큰으로 넘기는 것은
-    boto3 의 SDK 내부 재시도만 보호한다.
+    또 다른 새 평문 키가 발급된다. 저장소가 호출마다 만드는 트랜잭션 토큰은
+    boto3 의 한 SDK 호출 안에서 일어나는 내부 재시도만 보호한다.
 
     평문 키는 이 응답에서만 볼 수 있다.
 
@@ -857,13 +856,9 @@ def rotate_api_key(
     )
     # 새 해시 생성과 옛 해시 삭제를 하나의 트랜잭션으로 묶는다. 별도 호출로
     # 나누면 두 번째가 실패했을 때 두 키가 모두 유효하고 같은 key_id 가 GSI
-    # 에 중복으로 남는다. 상관 ID 는 SDK 내부 재시도를 보호할 뿐이며, HTTP
-    # 재호출까지 멱등하게 만들지는 않는다(재호출하면 또 새 키가 나온다).
-    services.registry.rotate_api_key(
-        existing.key_hash,
-        rotated,
-        client_request_token=observability.get_correlation_id() or None,
-    )
+    # 에 중복으로 남는다. 저장소의 작업별 토큰은 SDK 내부 재시도를 보호할
+    # 뿐이며, HTTP 재호출까지 멱등하게 만들지는 않는다.
+    services.registry.rotate_api_key(existing.key_hash, rotated)
     services.logger.info(
         "API 키를 재발급했다",
         extra={"account_id": account_id, "key_id": key_id},

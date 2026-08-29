@@ -34,6 +34,7 @@ from concurrent import futures
 import datetime
 import decimal
 import typing
+import uuid
 
 import boto3
 from boto3.dynamodb import types as dynamodb_types
@@ -309,6 +310,8 @@ class RegistryRepository:
         Raises:
             ResourceConflictError: `overwrite` 가 `False` 인데 같은 ID 의
                 계정이 이미 있는 경우.
+            ResourceNotFoundError: `overwrite` 가 `True` 인데 갱신 직전
+                계정이 삭제된 경우.
         """
         item = _strip_none(
             {
@@ -365,6 +368,8 @@ class RegistryRepository:
 
         Raises:
             ResourceConflictError: 중복 생성인 경우.
+            ResourceNotFoundError: `overwrite` 가 `True` 인데 갱신 직전
+                팀이 삭제된 경우.
         """
         item = _strip_none(
             {
@@ -420,6 +425,8 @@ class RegistryRepository:
 
         Raises:
             ResourceConflictError: 중복 생성인 경우.
+            ResourceNotFoundError: `overwrite` 가 `True` 인데 갱신 직전
+                사용자가 삭제된 경우.
         """
         item = _strip_none(
             {
@@ -619,16 +626,18 @@ class RegistryRepository:
             raise errors.ResourceNotFoundError(
                 f"API 키를 찾을 수 없다: account={account_id} key={key_id}"
             )
-        self._table.delete_item(
-            Key={"pk": items[0]["pk"], "sk": _META_SORT_KEY}
+        self._conditional_delete(
+            partition=str(items[0]["pk"]),
+            sort=_META_SORT_KEY,
+            not_found=(
+                f"API 키를 찾을 수 없다: account={account_id} key={key_id}"
+            ),
         )
 
     def rotate_api_key(
         self,
         old_key_hash: str,
         rotated: domain.ApiKey,
-        *,
-        client_request_token: str | None = None,
     ) -> None:
         """키를 원자적으로 재발급한다.
 
@@ -637,26 +646,21 @@ class RegistryRepository:
         가 실패했을 때 옛 키와 새 키가 모두 유효하고 같은 `key_id` 가 GSI 에
         중복으로 남는다. 트랜잭션은 둘 다 성공하거나 둘 다 취소되게 한다.
 
-        `client_request_token` 을 주면 `ClientRequestToken` 으로 전달한다. 이는
-        **같은 트랜잭션 호출의 SDK 내부 재시도**를 보호한다. 즉 네트워크
-        떨림으로 boto3 가 동일 요청을 자동 재시도할 때, 트랜잭션이 두 번
-        적용되지 않도록 DynamoDB 가 결과를 캐시한다(약 10분 창).
+        호출마다 새 `ClientRequestToken` 을 만들며, 이는 **같은 SDK 호출의
+        내부 재시도**를 보호한다. 네트워크 떨림으로 boto3 가 동일 요청을
+        자동 재시도할 때 트랜잭션이 두 번 적용되지 않도록 DynamoDB 가
+        결과를 캐시한다(약 10분 창).
 
         이 보호는 **HTTP `/rotate` 재호출까지 멱등하게 만들지는 않는다.** 응답이
         유실되어 클라이언트가 `/rotate` 를 다시 부르면, 그 호출은 새 평문 키를
-        새로 만들므로 트랜잭션 내용(새 해시)이 달라진다. 같은 토큰을 재사용하면
-        내용이 달라 `IdempotentParameterMismatch` 가 날 수 있다. HTTP 수준의
-        완전한 멱등성이 필요하면 회전 결과를 작업 ID 별로 임시 저장하는 별도
-        설계가 필요하다. 그 전까지 재발급은 "다시 부르면 또 새 키가 나온다"는
-        동작으로 다룬다.
-
-        DynamoDB 규격상 토큰은 1~36자만 허용되므로 그 범위를 벗어나면 생략한다.
+        새로 만들므로 트랜잭션 내용과 작업 토큰도 달라진다. HTTP 수준의 완전한
+        멱등성이 필요하면 회전 결과를 작업 ID 별로 임시 저장하는 별도 설계가
+        필요하다. 그 전까지 재발급은 "다시 부르면 또 새 키가 나온다"는 동작으로
+        다룬다.
 
         Args:
             old_key_hash: 무효화할 옛 키의 해시.
             rotated: 새 해시·접두어를 담은 키. `key_id` 는 그대로다.
-            client_request_token: SDK 내부 재시도 보호용 토큰. 보통 관리 요청의
-                상관 ID.
 
         Raises:
             GatewayError: 트랜잭션 클라이언트가 주입되지 않은 경우.
@@ -711,12 +715,14 @@ class RegistryRepository:
             },
         ]
         try:
-            transact_kwargs: _JsonDict = {"TransactItems": transact_items}
-            # DynamoDB 는 1~36자 토큰만 받는다. 범위를 벗어나면 멱등성 없이
-            # 진행하되 호출 자체는 막지 않는다.
-            if client_request_token and 1 <= len(client_request_token) <= 36:
-                transact_kwargs["ClientRequestToken"] = client_request_token
-            self._client.transact_write_items(**transact_kwargs)
+            # 한 HTTP 요청 안의 SDK 재시도는 같은 호출 인자를 재사용하므로
+            # 동일 토큰을 쓴다. 다음 HTTP 요청은 여기로 다시 들어와 새 토큰을
+            # 받아, 클라이언트가 X-Request-Id 를 재사용해도 서로 충돌하지
+            # 않는다.
+            self._client.transact_write_items(
+                TransactItems=transact_items,
+                ClientRequestToken=uuid.uuid4().hex,
+            )
         except botocore.exceptions.ClientError as exc:
             reasons = exc.response.get("CancellationReasons") or []
             codes = [reason.get("Code") for reason in reasons]
@@ -889,15 +895,28 @@ class RegistryRepository:
     # -- 내부 ---------------------------------------------------------------
 
     def _put(self, item: _JsonDict, *, overwrite: bool, label: str) -> None:
-        """조건부 PutItem 공통 처리."""
-        kwargs: _JsonDict = {"Item": item}
-        if not overwrite:
-            kwargs["ConditionExpression"] = "attribute_not_exists(pk)"
+        """생성·갱신을 구분하는 조건부 PutItem 공통 처리.
+
+        생성은 대상이 없어야 하고, 갱신은 대상이 있어야 한다. 갱신 전에
+        다른 요청이 항목을 삭제했는데 무조건 Put 하면 삭제된 리소스를
+        되살리므로 두 방향 모두 조건을 건다.
+        """
+        condition = (
+            "attribute_exists(pk)" if overwrite else "attribute_not_exists(pk)"
+        )
         try:
-            self._table.put_item(**kwargs)
+            self._table.put_item(
+                Item=item,
+                ConditionExpression=condition,
+            )
         except botocore.exceptions.ClientError as exc:
             code = exc.response.get("Error", {}).get("Code")
             if code == "ConditionalCheckFailedException":
+                if overwrite:
+                    raise errors.ResourceNotFoundError(
+                        f"수정할 리소스를 찾을 수 없다: {label} "
+                        f"{item['pk']}/{item['sk']}"
+                    ) from exc
                 raise errors.ResourceConflictError(
                     f"이미 존재하는 {label}: {item['pk']}/{item['sk']}"
                 ) from exc

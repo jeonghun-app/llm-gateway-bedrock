@@ -96,6 +96,26 @@ def test_put_account_overwrite면덮어쓴다(
     assert loaded.status is domain.EntityStatus.DISABLED
 
 
+def test_put_account_overwrite_삭제된계정을되살리지않는다(
+    registry: repository.RegistryRepository,
+) -> None:
+    """조회와 갱신 사이에 삭제된 계정을 PutItem 으로 재생성하면 안 된다."""
+    # Arrange: 라우터의 선행 조회 뒤 다른 요청이 삭제한 경쟁을 모사한다.
+    account = _account()
+    registry.put_account(account)
+    registry._table.delete_item(  # noqa: SLF001 - 경쟁 상황 모사
+        Key={"pk": repository.account_pk("acme"), "sk": "META"}
+    )
+
+    # Act / Assert
+    with pytest.raises(errors.ResourceNotFoundError):
+        registry.put_account(
+            account.model_copy(update={"name": "되살아나면 안 됨"}),
+            overwrite=True,
+        )
+    assert registry.get_account("acme") is None
+
+
 def test_list_accounts_전체를정렬해반환한다(
     registry: repository.RegistryRepository,
 ) -> None:
@@ -451,24 +471,33 @@ def test_rotate_api_key_옛키가없으면롤백되어새키도안생긴다(
     assert registry.list_api_keys("acme") == []
 
 
-def test_rotate_api_key_멱등성토큰을트랜잭션에전달한다() -> None:
-    """`ClientRequestToken` 을 TransactWriteItems 로 넘기는지 확인한다.
+def test_rotate_api_key_호출마다새멱등성토큰을쓴다(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """HTTP 호출끼리 토큰이 겹치지 않고 SDK 내부 재시도만 보호한다.
 
-    이 토큰은 boto3 의 SDK 내부 재시도만 보호한다(HTTP `/rotate` 재호출까지
-    멱등하게 만들지는 않는다). 실제 보호는 DynamoDB 몫이고 moto 는 이를
-    구현하지 않으므로, 여기서는 우리 코드가 토큰을 트랜잭션 호출에 실어
-    보내는지만 대역 클라이언트로 검증한다.
+    클라이언트가 같은 X-Request-Id 로 HTTP 요청을 다시 보내더라도 새 키의
+    내용은 달라진다. 상관 ID 를 토큰으로 재사용하면 DynamoDB 가
+    IdempotentParameterMismatch 를 내므로, 저장소 호출마다 별도 토큰을
+    만들어야 한다.
     """
 
-    # Arrange: transact_write_items 호출 인자를 붙잡는 대역 클라이언트.
+    # Arrange: transact_write_items 호출 인자를 모두 붙잡는 대역 클라이언트.
     class _CapturingClient:
         def __init__(self) -> None:
-            self.captured: dict[str, object] = {}
+            self.calls: list[dict[str, object]] = []
 
         def transact_write_items(self, **kwargs: object) -> None:
-            self.captured = kwargs
+            self.calls.append(kwargs)
 
     client = _CapturingClient()
+    tokens = iter(
+        [
+            type("_Token", (), {"hex": "a" * 32})(),
+            type("_Token", (), {"hex": "b" * 32})(),
+        ]
+    )
+    monkeypatch.setattr(repository.uuid, "uuid4", lambda: next(tokens))
 
     class _NamedTable:
         name = "registry"
@@ -476,40 +505,37 @@ def test_rotate_api_key_멱등성토큰을트랜잭션에전달한다() -> None:
     repo = repository.RegistryRepository(_NamedTable(), client=client)
     key = _api_key("key-1")
 
-    # Act
-    repo.rotate_api_key(
-        "old-hash", key, client_request_token="rotate-token-0001"
+    # Act: 서로 다른 HTTP 처리에 해당하는 저장소 호출을 두 번 한다.
+    repo.rotate_api_key("old-hash", key)
+    repo.rotate_api_key("old-hash", key)
+
+    # Assert
+    assert [call["ClientRequestToken"] for call in client.calls] == [
+        "a" * 32,
+        "b" * 32,
+    ]
+    assert all("TransactItems" in call for call in client.calls)
+
+
+def test_delete_api_key_GSI조회후이미삭제됐으면404(
+    registry: repository.RegistryRepository,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """GSI 조회와 삭제 사이에 다른 요청이 키를 지운 경쟁을 모사한다."""
+    # Arrange: 키가 GSI 에서 보였지만 실제 아이템은 이미 사라진 상태다.
+    api_key = _api_key()
+    registry.put_api_key(api_key)
+    stale_item = {"pk": repository.key_pk(api_key.key_hash)}
+    registry._table.delete_item(  # noqa: SLF001 - 경쟁 상황 모사
+        Key={"pk": stale_item["pk"], "sk": "META"}
+    )
+    monkeypatch.setattr(
+        registry, "_query_index", lambda **_kwargs: [stale_item]
     )
 
-    # Assert
-    assert client.captured["ClientRequestToken"] == "rotate-token-0001"
-    assert "TransactItems" in client.captured
-
-
-def test_rotate_api_key_긴토큰은생략한다() -> None:
-    """36자를 넘는 토큰은 DynamoDB 규격 위반이라 실어 보내지 않는다."""
-
-    # Arrange
-    class _CapturingClient:
-        def __init__(self) -> None:
-            self.captured: dict[str, object] = {}
-
-        def transact_write_items(self, **kwargs: object) -> None:
-            self.captured = kwargs
-
-    client = _CapturingClient()
-
-    class _NamedTable:
-        name = "registry"
-
-    repo = repository.RegistryRepository(_NamedTable(), client=client)
-    key = _api_key("key-1")
-
-    # Act
-    repo.rotate_api_key("old-hash", key, client_request_token="x" * 37)
-
-    # Assert
-    assert "ClientRequestToken" not in client.captured
+    # Act / Assert: 조건부 삭제가 두 번째 성공을 204 로 숨기지 않는다.
+    with pytest.raises(errors.ResourceNotFoundError):
+        registry.delete_api_key("acme", "key-1")
 
 
 def test_touch_api_key_마지막사용시각을갱신한다(

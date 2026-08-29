@@ -14,12 +14,15 @@ import decimal
 import os
 import typing
 
-# moto 를 import 하기 전에 설정해야 효과가 있다.
-os.environ.setdefault("AWS_ACCESS_KEY_ID", "testing")
-os.environ.setdefault("AWS_SECRET_ACCESS_KEY", "testing")
-os.environ.setdefault("AWS_SECURITY_TOKEN", "testing")
-os.environ.setdefault("AWS_SESSION_TOKEN", "testing")
-os.environ.setdefault("AWS_DEFAULT_REGION", "us-east-1")
+# moto 를 import 하기 전에 설정해야 효과가 있다. `setdefault` 를 쓰면 개발
+# 셸의 실제 임시 자격증명과 만료 시각을 물려받을 수 있으므로, 테스트
+# 프로세스에서는 항상 더미 값으로 덮어쓴다.
+os.environ["AWS_ACCESS_KEY_ID"] = "testing"
+os.environ["AWS_SECRET_ACCESS_KEY"] = "testing"
+os.environ["AWS_SECURITY_TOKEN"] = "testing"
+os.environ["AWS_SESSION_TOKEN"] = "testing"
+os.environ["AWS_DEFAULT_REGION"] = "us-east-1"
+os.environ.pop("AWS_CREDENTIAL_EXPIRATION", None)
 
 import boto3  # noqa: E402
 from fastapi import testclient  # noqa: E402
@@ -429,7 +432,7 @@ def seed_account_tree(
     team_id: str = "platform",
     user_id: str = "alice",
 ) -> None:
-    """계정·팀·사용자를 심는다. 이미 있으면 무시한다.
+    """계정·팀·사용자를 심는다. 이미 있으면 테스트 기본값으로 갱신한다.
 
     Args:
         registry_repo: 레지스트리 저장소.
@@ -437,23 +440,26 @@ def seed_account_tree(
         team_id: 팀 ID.
         user_id: 사용자 ID.
     """
+    account = domain.Account(account_id=account_id, name="Acme Inc.")
     registry_repo.put_account(
-        domain.Account(account_id=account_id, name="Acme Inc."),
-        overwrite=True,
+        account,
+        overwrite=registry_repo.get_account(account_id) is not None,
     )
+    team = domain.Team(account_id=account_id, team_id=team_id, name="플랫폼팀")
     registry_repo.put_team(
-        domain.Team(account_id=account_id, team_id=team_id, name="플랫폼팀"),
-        overwrite=True,
+        team,
+        overwrite=registry_repo.get_team(account_id, team_id) is not None,
+    )
+    user = domain.User(
+        account_id=account_id,
+        user_id=user_id,
+        name="앨리스",
+        email="alice@example.com",
+        team_id=team_id,
     )
     registry_repo.put_user(
-        domain.User(
-            account_id=account_id,
-            user_id=user_id,
-            name="앨리스",
-            email="alice@example.com",
-            team_id=team_id,
-        ),
-        overwrite=True,
+        user,
+        overwrite=registry_repo.get_user(account_id, user_id) is not None,
     )
 
 
