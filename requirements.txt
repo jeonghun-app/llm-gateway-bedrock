@@ -13,7 +13,7 @@ uvloop==0.22.1
 httptools==0.8.0
 pydantic==2.13.4
 pydantic-settings==2.15.0
-boto3==1.43.78
+boto3==1.43.80
 botocore==1.43.78
 aws-lambda-powertools==3.34.0
 # OIDC(Cognito 등) 액세스 토큰 검증. RS256 서명 확인에 cryptography 가 필요해
