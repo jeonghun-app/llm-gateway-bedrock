@@ -3,6 +3,34 @@
 형식은 [Keep a Changelog](https://keepachangelog.com/ko/1.1.0/) 를 따르고,
 버전은 [유의적 버전](https://semver.org/lang/ko/)을 쓴다.
 
+## [1.3.0] - 2026-08-29
+
+배포 스크립트가 템플릿의 파라미터를 완전히 노출하도록 맞추고, 오픈소스
+프로젝트로서 갖춰야 할 커뮤니티 표준 파일을 더한 마이너 릴리스다. API 와
+데이터 모델은 바뀌지 않는다.
+
+### 추가
+
+- **배포 CLI 옵션 3종.** `infra/app.yaml` 에는 있었지만 `deploy.sh` 가
+  노출하지 않던 파라미터를 명령줄에서 지정할 수 있다.
+  - `--bedrock-region` — Bedrock 호출 리전을 배포 리전과 분리한다. 게이트
+    웨이는 서울에 두고 모델은 `us-east-1` 에서 부르는 구성이 가능하다.
+    지정하면 사전 점검의 모델 액세스 확인도 그 리전에서 수행한다.
+  - `--usage-ttl-days` — usage 원본 레코드 보존 기간(일).
+  - `--allowed-model-arn` — 태스크 역할이 호출 가능한 기반 모델 ARN 패턴.
+    IAM 을 특정 모델로 좁힐 때 쓴다.
+- **커뮤니티 표준 파일.** `CONTRIBUTING.md`(개발 환경·검증 명령·PR 절차),
+  `CODE_OF_CONDUCT.md`(Contributor Covenant 2.1), GitHub 이슈 템플릿(버그·
+  기능), PR 템플릿, `dependabot.yml`(pip·github-actions·docker 주간 점검).
+
+### 수정
+
+- **문서-코드 불일치 해소.** README 는 이미 `--bedrock-region`,
+  `--allowed-model-arn`, `--usage-ttl-days` 예시를 실었으나 스크립트가
+  해당 인자를 받지 못해 "알 수 없는 인자" 로 실패하던 문제를 바로잡았다.
+  빈 값을 넘기면 CloudFormation 기본값이 유지되도록 선택 파라미터를
+  조건부로만 전달한다.
+
 ## [1.2.1] - 2026-08-29
 
 관리 UI의 핵심 흐름을 실제 Chromium에서 검증하는 회귀 테스트를 추가한 패치

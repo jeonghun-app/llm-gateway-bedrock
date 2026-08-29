@@ -42,6 +42,15 @@ TASK_CPU="512"
 TASK_MEMORY="1024"
 LOG_LEVEL="INFO"
 DEFAULT_ALLOWED_MODELS=""
+# Bedrock 호출 리전. 비우면 스택 리전(--region)을 쓴다. 모델 가용성이
+# 리전마다 달라 게이트웨이는 서울에 두고 Bedrock 만 us-east-1 로 부르는
+# 구성을 이 옵션으로 만든다.
+BEDROCK_REGION=""
+# usage 원본 레코드 보존 기간(일). 집계 테이블은 만료되지 않는다.
+USAGE_TTL_DAYS=""
+# 태스크 역할이 호출할 수 있는 기반 모델 ARN 패턴. 비우면 템플릿 기본값
+# (모든 기반 모델)을 쓴다. 특정 모델로 IAM 을 좁히려면 지정한다.
+ALLOWED_BEDROCK_MODEL_ARN=""
 ALARM_EMAIL=""
 RUN_SEED="yes"
 RUN_SMOKE="yes"
@@ -80,6 +89,12 @@ usage() {
   --task-memory <N>         태스크 메모리 MiB (기본 1024)
   --log-level <레벨>        DEBUG|INFO|WARNING|ERROR (기본 INFO)
   --allowed-models <목록>   기본 허용 모델. 쉼표 구분
+  --bedrock-region <리전>   Bedrock 호출 리전 (선택). 비우면 --region 을
+                            쓴다. 배포 리전에 원하는 모델이 없을 때 지정한다.
+                            예: --region ap-northeast-2 --bedrock-region us-east-1
+  --usage-ttl-days <N>      usage 원본 레코드 보존 기간 (기본 90)
+  --allowed-model-arn <ARN> 태스크 역할이 호출 가능한 기반 모델 ARN 패턴.
+                            비우면 모든 기반 모델. IAM 을 좁히려면 지정한다.
   --alarm-email <메일>      알람 수신 이메일
   --no-seed                 데모 데이터 시드를 건너뛴다
   --no-smoke                스모크 테스트를 건너뛴다
@@ -117,6 +132,9 @@ while [[ $# -gt 0 ]]; do
         --task-memory)      TASK_MEMORY="${2:-}"; shift 2 ;;
         --log-level)        LOG_LEVEL="${2:-}"; shift 2 ;;
         --allowed-models)   DEFAULT_ALLOWED_MODELS="${2:-}"; shift 2 ;;
+        --bedrock-region)   BEDROCK_REGION="${2:-}"; shift 2 ;;
+        --usage-ttl-days)   USAGE_TTL_DAYS="${2:-}"; shift 2 ;;
+        --allowed-model-arn) ALLOWED_BEDROCK_MODEL_ARN="${2:-}"; shift 2 ;;
         --alarm-email)      ALARM_EMAIL="${2:-}"; shift 2 ;;
         --no-seed)          RUN_SEED="no"; shift ;;
         --no-smoke)         RUN_SMOKE="no"; shift ;;
@@ -191,14 +209,16 @@ ACCOUNT_ID="$(echo "${caller_json}" | jq -r .Account)"
 info "계정 ${ACCOUNT_ID} / 리전 ${AWS_REGION} / 환경 ${ENVIRONMENT}"
 
 # Bedrock 모델 액세스가 꺼져 있으면 배포는 성공하지만 모든 호출이 실패한다.
-# 30분 뒤에 알게 되는 것보다 지금 아는 편이 낫다.
-model_count="$(aws_cli bedrock list-foundation-models \
+# 30분 뒤에 알게 되는 것보다 지금 아는 편이 낫다. Bedrock 을 다른 리전에서
+# 부르도록 --bedrock-region 을 준 경우, 그 리전에서 확인해야 의미가 있다.
+bedrock_check_region="${BEDROCK_REGION:-${AWS_REGION}}"
+model_count="$(aws --region "${bedrock_check_region}" bedrock list-foundation-models \
     --by-output-modality TEXT --by-inference-type ON_DEMAND \
     --query 'length(modelSummaries)' --output text 2>/dev/null || echo "0")"
 if [[ "${model_count}" == "0" ]]; then
-    warn "Bedrock 온디맨드 텍스트 모델이 조회되지 않는다. 콘솔의 Model access 에서 모델을 활성화해야 호출이 성공한다."
+    warn "Bedrock 온디맨드 텍스트 모델이 ${bedrock_check_region} 에서 조회되지 않는다. 콘솔의 Model access 에서 모델을 활성화해야 호출이 성공한다."
 else
-    info "Bedrock 온디맨드 텍스트 모델 ${model_count}개 확인"
+    info "Bedrock 온디맨드 텍스트 모델 ${model_count}개 확인 (${bedrock_check_region})"
 fi
 
 # 스택 없이 테이블만 남은 상태에서 배포하면 "테이블이 이미 있다" 로 실패한다.
@@ -289,6 +309,18 @@ fi
 # 4. 애플리케이션 스택
 # ---------------------------------------------------------------------------
 log "4/7 애플리케이션 스택 배포 (5~10분 소요)"
+
+# 값이 있을 때만 넘길 파라미터. 빈 값을 넘기면 CloudFormation 기본값 대신
+# 빈 문자열이 들어가 UsageTtlDays(Number)는 검증 실패하고,
+# AllowedBedrockModelArn 은 IAM 이 아무 모델도 허용하지 않게 된다.
+# BedrockRegion 은 템플릿이 빈 값을 HasBedrockRegion 조건으로 처리하므로
+# 항상 넘겨도 안전하다.
+optional_overrides=()
+[[ -n "${USAGE_TTL_DAYS}" ]] \
+    && optional_overrides+=("UsageTtlDays=${USAGE_TTL_DAYS}")
+[[ -n "${ALLOWED_BEDROCK_MODEL_ARN}" ]] \
+    && optional_overrides+=("AllowedBedrockModelArn=${ALLOWED_BEDROCK_MODEL_ARN}")
+
 aws_cli cloudformation deploy \
     --stack-name "${APP_STACK}" \
     --template-file "${REPO_ROOT}/infra/app.yaml" \
@@ -307,7 +339,9 @@ aws_cli cloudformation deploy \
         "TaskMemory=${TASK_MEMORY}" \
         "LogLevel=${LOG_LEVEL}" \
         "DefaultAllowedModels=${DEFAULT_ALLOWED_MODELS}" \
+        "BedrockRegion=${BEDROCK_REGION}" \
         "AlarmEmail=${ALARM_EMAIL}" \
+        ${optional_overrides[@]+"${optional_overrides[@]}"} \
     --tags \
         "Project=${PROJECT_NAME}" \
         "Environment=${ENVIRONMENT}" \

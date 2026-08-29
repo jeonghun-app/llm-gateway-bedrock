@@ -1,0 +1,36 @@
+# Dependabot 설정.
+#
+# 세 생태계를 주간으로 점검한다. 버전은 전부 고정(pip 는 ==, 액션은 SHA,
+# Docker 는 다이제스트)돼 있으므로 Dependabot 이 PR 로 갱신을 제안하고,
+# CI(포맷·린트·타입·테스트·이미지 빌드)가 회귀를 잡는다.
+version: 2
+updates:
+  # 런타임/개발 파이썬 의존성.
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+    # requirements.lock 은 lock_requirements.sh 로만 재생성한다. Dependabot
+    # 이 직접 편집하지 않도록 직접 의존성 파일만 대상으로 둔다.
+    allow:
+      - dependency-type: "direct"
+
+  # GitHub Actions. SHA 핀을 유지한 채 갱신 PR 을 만든다.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    labels:
+      - "dependencies"
+      - "ci"
+
+  # 컨테이너 베이스 이미지(Dockerfile). 다이제스트 핀을 갱신한다.
+  - package-ecosystem: "docker"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    labels:
+      - "dependencies"
