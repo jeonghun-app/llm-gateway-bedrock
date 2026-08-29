@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import functools
 import pathlib
+import typing
 
 import pydantic
 import pydantic_settings
@@ -95,6 +96,20 @@ class Settings(pydantic_settings.BaseSettings):
     # 동등). 비어 있으면 플랫폼 관리자를 토큰으로 부여할 수 없고, 계정별
     # `admin_groups` 로 자기 계정만 관리하게 된다.
     oidc_platform_admin_groups: str = ""
+
+    # 단가 표에 없는 모델을 어떻게 다루는지.
+    #
+    # AWS Price List API 에도 없는 신규 모델이 존재하므로 단가를 자동으로
+    # 채울 수 없다. 추측한 값을 넣으면 틀린 청구가 되므로, 대신 운영자가
+    # 정책을 고르게 한다.
+    #
+    #   allow  : 통과시키고 비용 0으로 기록한다(기존 동작, 기본값).
+    #            비용 귀속이 부정확해지지만 새 모델을 즉시 쓸 수 있다.
+    #   reject : 요청을 거부한다. 비용 귀속을 보장하지만 단가를 등록하기
+    #            전까지 그 모델을 쓸 수 없다.
+    #   hide   : 통과시키되 `/v1/models` 에서 감춘다. 클라이언트가 실수로
+    #            고르는 것을 막으면서 명시적 사용은 허용한다.
+    unpriced_model_policy: typing.Literal["allow", "reject", "hide"] = "allow"
 
     @property
     def oidc_platform_admin_group_list(self) -> tuple[str, ...]:

@@ -614,6 +614,7 @@ so the only time you set them yourself is when running locally.
 | `LLMGW_ADMIN_TOKEN` | **yes** | (empty) | Admin API and dashboard token. Empty means the admin API returns 503 |
 | `LLMGW_OIDC_PLATFORM_ADMIN_GROUPS` | no | (empty) | Groups granted platform-wide admin authority. Comma separated |
 | `LLMGW_DEFAULT_ALLOWED_MODELS` | no | (empty) | Applied when a key has no allowlist. Comma separated. Empty means all models |
+| `LLMGW_UNPRICED_MODEL_POLICY` | no | `allow` | How to handle models missing from the pricing table. `allow` (pass through, cost 0) / `reject` / `hide` (omit from `/v1/models`) |
 | `LLMGW_USAGE_TTL_DAYS` | no | `90` | Retention for raw usage records |
 | `LLMGW_PRICING_FILE` | no | in-package `pricing.json` | Path to the model pricing table |
 | `LLMGW_LOG_LEVEL` | no | `INFO` | Log level |

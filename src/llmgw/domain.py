@@ -9,6 +9,7 @@
 
 from __future__ import annotations
 
+import datetime
 import decimal
 import enum
 import typing
@@ -265,6 +266,7 @@ class User(_Base):
         email: 연락용 메일. 선택 사항.
         team_id: 소속 팀 ID. 팀이 없으면 빈 문자열.
         monthly_budget_usd: 사용자 월 예산. `None` 이면 상위 예산만 적용된다.
+        rpm_limit: 분당 요청 한도. `None` 이면 서버 기본값을 따른다.
         status: 활성 상태.
         created_at: 생성 시각(ISO-8601 UTC).
     """
@@ -277,6 +279,7 @@ class User(_Base):
     monthly_budget_usd: decimal.Decimal | None = pydantic.Field(
         default=None, ge=0
     )
+    rpm_limit: int | None = pydantic.Field(default=None, ge=1, le=100_000)
     status: EntityStatus = EntityStatus.ACTIVE
     created_at: str = ""
 
@@ -297,6 +300,8 @@ class ApiKey(_Base):
         name: 키 용도 메모.
         allowed_models: 허용 모델 목록. 비어 있으면 설정 기본값을 따른다.
         monthly_budget_usd: 키 단위 월 예산. `None` 이면 상위 예산만 적용.
+        rpm_limit: 분당 요청 한도. `None` 이면 사용자 한도를 따른다.
+        expires_at: 만료 시각(ISO-8601 UTC). 빈 문자열이면 무기한.
         status: 활성 상태.
         created_at: 생성 시각(ISO-8601 UTC).
         last_used_at: 마지막 사용 시각. 미사용이면 빈 문자열.
@@ -313,9 +318,37 @@ class ApiKey(_Base):
     monthly_budget_usd: decimal.Decimal | None = pydantic.Field(
         default=None, ge=0
     )
+    rpm_limit: int | None = pydantic.Field(default=None, ge=1, le=100_000)
+    expires_at: str = ""
     status: EntityStatus = EntityStatus.ACTIVE
     created_at: str = ""
     last_used_at: str = ""
+
+    def is_expired(self, now: datetime.datetime) -> bool:
+        """만료 시각이 지났는지 여부.
+
+        만료된 키는 삭제하지 않고 거부만 한다. 사용량 집계의 정렬 키가
+        `KEY#<key_id>` 라서 키를 지우면 과거 집계에서 이름을 붙일 수 없다.
+
+        Args:
+            now: 현재 시각(UTC).
+
+        Returns:
+            만료 시각이 설정돼 있고 그 시각이 지났으면 `True`.
+        """
+        if not self.expires_at:
+            return False
+        try:
+            deadline = datetime.datetime.fromisoformat(
+                self.expires_at.replace("Z", "+00:00")
+            )
+        except ValueError:
+            # 저장된 값이 깨졌다면 만료로 다룬다. 파싱 실패를 "무기한 유효"
+            # 로 해석하면 회수하려던 키가 영구히 살아남는다.
+            return True
+        if deadline.tzinfo is None:
+            deadline = deadline.replace(tzinfo=datetime.UTC)
+        return now >= deadline
 
 
 class Principal(_Base):
@@ -338,6 +371,9 @@ class Principal(_Base):
         team_budget_usd: 팀 월 예산.
         user_budget_usd: 사용자 월 예산.
         key_budget_usd: 키 월 예산.
+        rpm_limit: 적용할 분당 요청 한도. `None` 이면 제한 없음.
+        rate_scope: 레이트 리밋 카운터를 셀 단위. 키가 있으면
+            `KEY#<key_id>`, 없으면(OIDC 경로) `USER#<user_id>` 다.
     """
 
     account_id: str
@@ -350,6 +386,8 @@ class Principal(_Base):
     team_budget_usd: decimal.Decimal | None = None
     user_budget_usd: decimal.Decimal | None = None
     key_budget_usd: decimal.Decimal | None = None
+    rpm_limit: int | None = None
+    rate_scope: str = ""
 
 
 class UsageRecord(_Base):

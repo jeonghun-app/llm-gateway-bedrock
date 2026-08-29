@@ -63,6 +63,9 @@ _TS_INDEX_NAME = "lsi_ts"
 _META_SORT_KEY = "META"
 # 계정별 외부 인증(OIDC) 설정의 정렬 키.
 _AUTH_SORT_KEY = "AUTH"
+# 분 단위 레이트 리밋 카운터 보존 시간. 분 경계에서 시계가 어긋나도 직전 분이
+# 남아 있어야 한다.
+_RATE_LIMIT_TTL_SECONDS = 120
 
 _SECONDS_PER_DAY = 86400
 
@@ -85,6 +88,22 @@ def account_pk(account_id: str) -> str:
 def key_pk(key_hash: str) -> str:
     """API 키 파티션 키를 만든다."""
     return f"KEY#{key_hash}"
+
+
+def rate_limit_pk(account_id: str, scope: str) -> str:
+    """레이트 리밋 카운터의 파티션 키를 만든다.
+
+    호출 주체가 파티션 키에 들어가므로 부하가 키·사용자별로 분산된다. 분을
+    파티션 키에 넣으면 그 분의 모든 요청이 한 파티션에 몰린다.
+
+    Args:
+        account_id: 계정 ID.
+        scope: `KEY#<id>` 또는 `USER#<id>`.
+
+    Returns:
+        `RATE#<account_id>#<scope>` 형태의 파티션 키.
+    """
+    return f"RATE#{account_id}#{scope}"
 
 
 def issuer_pk(issuer: str) -> str:
@@ -228,6 +247,20 @@ def create_dynamodb_client(
 # ---------------------------------------------------------------------------
 # 변환 헬퍼
 # ---------------------------------------------------------------------------
+
+
+def _optional_int(value: typing.Any) -> int | None:
+    """DynamoDB 숫자를 정수로 바꾼다. 없으면 `None`.
+
+    Args:
+        value: 아이템에서 읽은 값.
+
+    Returns:
+        정수 또는 `None`.
+    """
+    if value is None:
+        return None
+    return int(value)
 
 
 def _optional_decimal(value: typing.Any) -> decimal.Decimal | None:
@@ -654,6 +687,7 @@ class RegistryRepository:
                 "email": user.email,
                 "team_id": user.team_id,
                 "monthly_budget_usd": user.monthly_budget_usd,
+                "rpm_limit": user.rpm_limit,
                 "status": user.status.value,
                 "created_at": user.created_at,
             }
@@ -717,6 +751,8 @@ class RegistryRepository:
                 "display_name": api_key.name,
                 "allowed_models": list(api_key.allowed_models),
                 "monthly_budget_usd": api_key.monthly_budget_usd,
+                "rpm_limit": api_key.rpm_limit,
+                "expires_at": api_key.expires_at,
                 "status": api_key.status.value,
                 "created_at": api_key.created_at,
                 "last_used_at": api_key.last_used_at,
@@ -800,6 +836,8 @@ class RegistryRepository:
                 "display_name": api_key.name,
                 "allowed_models": list(api_key.allowed_models),
                 "monthly_budget_usd": api_key.monthly_budget_usd,
+                "rpm_limit": api_key.rpm_limit,
+                "expires_at": api_key.expires_at,
                 "status": api_key.status.value,
                 "created_at": api_key.created_at,
                 "last_used_at": api_key.last_used_at,
@@ -1233,6 +1271,7 @@ class RegistryRepository:
             monthly_budget_usd=_optional_decimal(
                 item.get("monthly_budget_usd")
             ),
+            rpm_limit=_optional_int(item.get("rpm_limit")),
             status=domain.EntityStatus(item.get("status", "active")),
             created_at=str(item.get("created_at", "")),
         )
@@ -1254,6 +1293,8 @@ class RegistryRepository:
             monthly_budget_usd=_optional_decimal(
                 item.get("monthly_budget_usd")
             ),
+            rpm_limit=_optional_int(item.get("rpm_limit")),
+            expires_at=str(item.get("expires_at", "")),
             status=domain.EntityStatus(item.get("status", "active")),
             created_at=str(item.get("created_at", "")),
             last_used_at=str(item.get("last_used_at", "")),
@@ -1303,6 +1344,68 @@ class UsageStore:
         self._client = client
         self._usage_table_name = usage_table.name
         self._agg_table_name = agg_table.name
+
+    def try_consume_rate_limit(
+        self,
+        *,
+        account_id: str,
+        scope: str,
+        minute: str,
+        limit: int,
+        now: datetime.datetime,
+    ) -> bool:
+        """분당 요청 한도를 원자적으로 소비한다.
+
+        `ADD` 와 조건식을 한 번의 `UpdateItem` 으로 묶어, 태스크가 여러 개여도
+        정확히 센다. 태스크별 인메모리 카운터를 쓰면 한도가 태스크 수만큼
+        늘어나고 오토스케일링으로 그 배수가 계속 바뀐다.
+
+        카운터는 별도 테이블을 만들지 않고 usage 테이블의 다른 파티션
+        namespace 를 쓴다. 이 테이블에는 이미 TTL(`expires_at`)이 걸려 있어
+        만료된 분 단위 카운터가 자동으로 사라진다. 파티션 키에 호출 주체가
+        들어가므로 특정 분에 부하가 몰리는 핫 파티션이 생기지 않는다.
+
+        Args:
+            account_id: 계정 ID.
+            scope: 카운터 단위. `KEY#<id>` 또는 `USER#<id>`.
+            minute: `YYYY-MM-DDTHH:MM` 형태의 분 버킷.
+            limit: 분당 허용 요청 수.
+            now: 현재 시각. TTL 계산에 쓴다.
+
+        Returns:
+            소비에 성공하면 `True`, 한도를 이미 채웠으면 `False`.
+
+        Raises:
+            ClientError: 조건 실패 외의 DynamoDB 오류.
+        """
+        # 분 버킷은 2분 뒤에 지운다. 경계에서 시계가 조금 어긋나도 직전 분
+        # 카운터가 남아 있어야 한다.
+        expires_at = int(now.timestamp()) + _RATE_LIMIT_TTL_SECONDS
+        try:
+            self._usage_table.update_item(
+                Key={
+                    "pk": rate_limit_pk(account_id, scope),
+                    "sk": minute,
+                },
+                UpdateExpression=(
+                    "ADD #count :one SET expires_at = :expires_at"
+                ),
+                ConditionExpression=(
+                    "attribute_not_exists(#count) OR #count < :limit"
+                ),
+                ExpressionAttributeNames={"#count": "request_count"},
+                ExpressionAttributeValues={
+                    ":one": 1,
+                    ":limit": limit,
+                    ":expires_at": expires_at,
+                },
+            )
+        except botocore.exceptions.ClientError as exc:
+            code = exc.response.get("Error", {}).get("Code")
+            if code == "ConditionalCheckFailedException":
+                return False
+            raise
+        return True
 
     def record(self, usage: domain.UsageRecord) -> bool:
         """사용량을 기록하고 집계를 갱신한다.

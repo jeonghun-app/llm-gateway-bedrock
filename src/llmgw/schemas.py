@@ -163,6 +163,7 @@ class CreateUserRequest(_AdminBase):
         email: 연락용 메일.
         team_id: 소속 팀 ID.
         monthly_budget_usd: 월 예산. 생략하면 상위 예산만 적용된다.
+        rpm_limit: 분당 요청 한도. 생략하면 서버 기본값을 따른다.
     """
 
     user_id: str = pydantic.Field(pattern=r"^[a-z0-9][a-z0-9._-]{1,63}$")
@@ -172,6 +173,7 @@ class CreateUserRequest(_AdminBase):
     monthly_budget_usd: decimal.Decimal | None = pydantic.Field(
         default=None, ge=0
     )
+    rpm_limit: int | None = pydantic.Field(default=None, ge=1, le=100_000)
 
 
 class CreateApiKeyRequest(_AdminBase):
@@ -182,6 +184,9 @@ class CreateApiKeyRequest(_AdminBase):
         name: 키 용도 메모.
         allowed_models: 허용 모델 목록. 비어 있으면 서버 기본 정책을 따른다.
         monthly_budget_usd: 키 월 예산.
+        rpm_limit: 분당 요청 한도. 생략하면 사용자 한도를 따른다.
+        expires_at: 만료 시각(ISO-8601 UTC). 생략하면 무기한. 임시로 내주는
+            키에 지정하면 회수를 사람이 기억하지 않아도 된다.
     """
 
     user_id: str = pydantic.Field(min_length=1)
@@ -190,6 +195,8 @@ class CreateApiKeyRequest(_AdminBase):
     monthly_budget_usd: decimal.Decimal | None = pydantic.Field(
         default=None, ge=0
     )
+    rpm_limit: int | None = pydantic.Field(default=None, ge=1, le=100_000)
+    expires_at: str = pydantic.Field(default="", max_length=40)
 
 
 class UpdateStatusRequest(_AdminBase):
@@ -250,6 +257,7 @@ class UpdateUserRequest(_AdminBase):
         email: 연락용 메일. 빈 문자열이면 지운다.
         team_id: 소속 팀 ID. 빈 문자열이면 팀 없음으로 만든다.
         monthly_budget_usd: 월 예산. `null` 이면 상위 예산만 적용.
+        rpm_limit: 분당 요청 한도. `null` 이면 서버 기본값을 따른다.
     """
 
     name: str = pydantic.Field(default="", min_length=1, max_length=128)
@@ -258,6 +266,7 @@ class UpdateUserRequest(_AdminBase):
     monthly_budget_usd: decimal.Decimal | None = pydantic.Field(
         default=None, ge=0
     )
+    rpm_limit: int | None = None
 
 
 class UpdateApiKeyRequest(_AdminBase):
@@ -270,6 +279,9 @@ class UpdateApiKeyRequest(_AdminBase):
         name: 키 용도 메모. 빈 문자열이면 지운다.
         allowed_models: 허용 모델 목록. 빈 목록이면 서버 기본 정책을 따른다.
         monthly_budget_usd: 키 월 예산. `null` 이면 상위 예산만 적용.
+        rpm_limit: 분당 요청 한도. `null` 이면 사용자 한도를 따른다.
+        expires_at: 만료 시각(ISO-8601 UTC). 빈 문자열이면 무기한으로
+            되돌린다.
     """
 
     name: str = ""
@@ -277,6 +289,8 @@ class UpdateApiKeyRequest(_AdminBase):
     monthly_budget_usd: decimal.Decimal | None = pydantic.Field(
         default=None, ge=0
     )
+    rpm_limit: int | None = None
+    expires_at: str | None = pydantic.Field(default=None, max_length=40)
 
 
 class PutAuthConfigRequest(_AdminBase):

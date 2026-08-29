@@ -125,6 +125,9 @@ class UsageRecorder:
                 "단가 표에 없는 모델이다. 비용을 0으로 기록한다",
                 extra={"model_id": model_id},
             )
+            # 로그만 남기면 아무도 보지 않는다. 알람을 걸 수 있게 메트릭으로도
+            # 올린다.
+            self._metrics.emit_unpriced_request(model_id)
         return domain.UsageRecord(
             usage_id=self._id_factory.new_id(),
             request_id=request_id,

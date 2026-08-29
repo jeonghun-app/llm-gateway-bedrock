@@ -151,3 +151,31 @@ class AdminNotConfiguredError(GatewayError):
     status_code = http.HTTPStatus.SERVICE_UNAVAILABLE
     error_type = "server_error"
     code = "admin_not_configured"
+
+
+class RateLimitExceededError(GatewayError):
+    """게이트웨이가 강제하는 분당 요청 한도를 넘은 경우.
+
+    Bedrock 이 던지는 스로틀(`UpstreamRateLimitError`)과 구분한다. 이쪽은
+    이 게이트웨이의 정책이고, 저쪽은 상류의 용량 문제다. 원인이 다르면
+    조치도 다르므로 코드를 나눈다.
+
+    `Retry-After` 를 함께 내려보낸다. 값이 없으면 OpenAI 클라이언트가 즉시
+    재시도해 거부가 반복되고 서로 부하만 늘어난다.
+    """
+
+    status_code = http.HTTPStatus.TOO_MANY_REQUESTS
+    error_type = "rate_limit_error"
+    code = "rate_limit_exceeded"
+
+    def __init__(
+        self, message: str, *, retry_after_seconds: int | None = None
+    ) -> None:
+        """예외를 만든다.
+
+        Args:
+            message: 사용자에게 보일 메시지.
+            retry_after_seconds: 재시도까지 기다릴 초. 응답 헤더에 넣는다.
+        """
+        super().__init__(message)
+        self.retry_after_seconds = retry_after_seconds

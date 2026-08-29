@@ -181,9 +181,16 @@ def _register_exception_handlers(
         """도메인 예외를 OpenAI 호환 에러 본문으로 변환한다."""
         del request
         gateway_error = typing.cast("errors.GatewayError", exc)
+        headers: dict[str, str] = {}
+        # 레이트 리밋 거부에는 재시도 시점을 알려준다. 없으면 OpenAI
+        # 클라이언트가 즉시 재시도해 거부가 반복되고 부하만 늘어난다.
+        retry_after = getattr(gateway_error, "retry_after_seconds", None)
+        if isinstance(retry_after, int) and retry_after > 0:
+            headers["Retry-After"] = str(retry_after)
         return responses.JSONResponse(
             status_code=gateway_error.status_code,
             content=gateway_error.to_payload(),
+            headers=headers or None,
         )
 
     @app.exception_handler(fastapi_exceptions.RequestValidationError)

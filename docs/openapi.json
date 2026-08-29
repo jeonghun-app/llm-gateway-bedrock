@@ -220,7 +220,7 @@
       },
       "CreateApiKeyRequest": {
         "additionalProperties": false,
-        "description": "API 키 발급 요청.\n\nAttributes:\n    user_id: 키를 귀속시킬 사용자 ID. 반드시 존재해야 한다.\n    name: 키 용도 메모.\n    allowed_models: 허용 모델 목록. 비어 있으면 서버 기본 정책을 따른다.\n    monthly_budget_usd: 키 월 예산.",
+        "description": "API 키 발급 요청.\n\nAttributes:\n    user_id: 키를 귀속시킬 사용자 ID. 반드시 존재해야 한다.\n    name: 키 용도 메모.\n    allowed_models: 허용 모델 목록. 비어 있으면 서버 기본 정책을 따른다.\n    monthly_budget_usd: 키 월 예산.\n    rpm_limit: 분당 요청 한도. 생략하면 사용자 한도를 따른다.\n    expires_at: 만료 시각(ISO-8601 UTC). 생략하면 무기한. 임시로 내주는\n        키에 지정하면 회수를 사람이 기억하지 않아도 된다.",
         "properties": {
           "allowed_models": {
             "items": {
@@ -228,6 +228,12 @@
             },
             "title": "Allowed Models",
             "type": "array"
+          },
+          "expires_at": {
+            "default": "",
+            "maxLength": 40,
+            "title": "Expires At",
+            "type": "string"
           },
           "monthly_budget_usd": {
             "anyOf": [
@@ -249,6 +255,19 @@
             "default": "",
             "title": "Name",
             "type": "string"
+          },
+          "rpm_limit": {
+            "anyOf": [
+              {
+                "maximum": 100000.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rpm Limit"
           },
           "user_id": {
             "minLength": 1,
@@ -303,7 +322,7 @@
       },
       "CreateUserRequest": {
         "additionalProperties": false,
-        "description": "사용자 생성 요청.\n\nAttributes:\n    user_id: 계정 범위에서 유일한 사용자 식별자.\n    name: 표시 이름.\n    email: 연락용 메일.\n    team_id: 소속 팀 ID.\n    monthly_budget_usd: 월 예산. 생략하면 상위 예산만 적용된다.",
+        "description": "사용자 생성 요청.\n\nAttributes:\n    user_id: 계정 범위에서 유일한 사용자 식별자.\n    name: 표시 이름.\n    email: 연락용 메일.\n    team_id: 소속 팀 ID.\n    monthly_budget_usd: 월 예산. 생략하면 상위 예산만 적용된다.\n    rpm_limit: 분당 요청 한도. 생략하면 서버 기본값을 따른다.",
         "properties": {
           "email": {
             "default": "",
@@ -331,6 +350,19 @@
             "minLength": 1,
             "title": "Name",
             "type": "string"
+          },
+          "rpm_limit": {
+            "anyOf": [
+              {
+                "maximum": 100000.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rpm Limit"
           },
           "team_id": {
             "default": "",
@@ -500,7 +532,7 @@
       },
       "UpdateApiKeyRequest": {
         "additionalProperties": false,
-        "description": "API 키 수정 요청. 규칙은 `UpdateAccountRequest` 와 같다.\n\n키의 소속(계정·팀·사용자)과 해시는 바꿀 수 없다. 소속을 옮기려면 새\n키를 발급한다. 문자열·목록 필드는 `null` 을 허용하지 않는다.\n\nAttributes:\n    name: 키 용도 메모. 빈 문자열이면 지운다.\n    allowed_models: 허용 모델 목록. 빈 목록이면 서버 기본 정책을 따른다.\n    monthly_budget_usd: 키 월 예산. `null` 이면 상위 예산만 적용.",
+        "description": "API 키 수정 요청. 규칙은 `UpdateAccountRequest` 와 같다.\n\n키의 소속(계정·팀·사용자)과 해시는 바꿀 수 없다. 소속을 옮기려면 새\n키를 발급한다. 문자열·목록 필드는 `null` 을 허용하지 않는다.\n\nAttributes:\n    name: 키 용도 메모. 빈 문자열이면 지운다.\n    allowed_models: 허용 모델 목록. 빈 목록이면 서버 기본 정책을 따른다.\n    monthly_budget_usd: 키 월 예산. `null` 이면 상위 예산만 적용.\n    rpm_limit: 분당 요청 한도. `null` 이면 사용자 한도를 따른다.\n    expires_at: 만료 시각(ISO-8601 UTC). 빈 문자열이면 무기한으로\n        되돌린다.",
         "properties": {
           "allowed_models": {
             "items": {
@@ -508,6 +540,18 @@
             },
             "title": "Allowed Models",
             "type": "array"
+          },
+          "expires_at": {
+            "anyOf": [
+              {
+                "maxLength": 40,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expires At"
           },
           "monthly_budget_usd": {
             "anyOf": [
@@ -529,6 +573,17 @@
             "default": "",
             "title": "Name",
             "type": "string"
+          },
+          "rpm_limit": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rpm Limit"
           }
         },
         "title": "UpdateApiKeyRequest",
@@ -586,7 +641,7 @@
       },
       "UpdateUserRequest": {
         "additionalProperties": false,
-        "description": "사용자 수정 요청. 규칙은 `UpdateAccountRequest` 와 같다.\n\n문자열 필드는 `null` 을 허용하지 않는다. 이메일과 팀은 빈 문자열로\n비울 수 있다(팀은 빈 문자열이면 팀 없음).\n\nAttributes:\n    name: 표시 이름. 보내면 비어 있지 않아야 한다.\n    email: 연락용 메일. 빈 문자열이면 지운다.\n    team_id: 소속 팀 ID. 빈 문자열이면 팀 없음으로 만든다.\n    monthly_budget_usd: 월 예산. `null` 이면 상위 예산만 적용.",
+        "description": "사용자 수정 요청. 규칙은 `UpdateAccountRequest` 와 같다.\n\n문자열 필드는 `null` 을 허용하지 않는다. 이메일과 팀은 빈 문자열로\n비울 수 있다(팀은 빈 문자열이면 팀 없음).\n\nAttributes:\n    name: 표시 이름. 보내면 비어 있지 않아야 한다.\n    email: 연락용 메일. 빈 문자열이면 지운다.\n    team_id: 소속 팀 ID. 빈 문자열이면 팀 없음으로 만든다.\n    monthly_budget_usd: 월 예산. `null` 이면 상위 예산만 적용.\n    rpm_limit: 분당 요청 한도. `null` 이면 서버 기본값을 따른다.",
         "properties": {
           "email": {
             "default": "",
@@ -615,6 +670,17 @@
             "minLength": 1,
             "title": "Name",
             "type": "string"
+          },
+          "rpm_limit": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rpm Limit"
           },
           "team_id": {
             "default": "",
@@ -670,7 +736,7 @@
   "info": {
     "description": "Amazon Bedrock 앞단의 OpenAI 호환 게이트웨이.\n\n- `POST /v1/chat/completions` — OpenAI Chat Completions 호환 (스트리밍 지원)\n- `GET /v1/models` — 호출 가능한 모델 목록\n- `/admin/*` — 계정·팀·사용자·API 키 관리 (`X-Admin-Token` 필요)\n- `/analytics/*` — 계정·팀·사용자·모델별 사용량 집계 (`X-Admin-Token` 필요)\n- `/ui` — 모니터링 대시보드",
     "title": "LLM Gateway",
-    "version": "1.9.0"
+    "version": "1.10.0"
   },
   "openapi": "3.1.0",
   "paths": {

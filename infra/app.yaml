@@ -192,6 +192,16 @@ Parameters:
     MinValue: 1
     Description: p99 응답 시간 알람 임계값(초).
 
+  UnpricedModelPolicy:
+    Type: String
+    Default: allow
+    AllowedValues: [allow, reject, hide]
+    Description: >-
+      단가 표에 없는 모델을 다루는 방식. allow 는 통과시키고 비용 0으로
+      기록한다(기존 동작). reject 는 거부해 비용 귀속을 보장한다. hide 는
+      /v1/models 에서 감춰 실수로 고르는 것만 막는다. AWS Price List API 에도
+      없는 신규 모델이 있어 단가를 자동으로 채울 수 없다.
+
   AlarmEmail:
     Type: String
     Default: ""
@@ -936,6 +946,8 @@ Resources:
               Value: !Sub "${ProjectName}-${Environment}"
             - Name: LLMGW_METRICS_NAMESPACE
               Value: LLMGateway
+            - Name: LLMGW_UNPRICED_MODEL_POLICY
+              Value: !Ref UnpricedModelPolicy
           Secrets:
             # 토큰이 태스크 정의에 평문으로 남지 않는다. ECS 가 실행 시점에
             # Secrets Manager 에서 읽어 환경변수로 주입한다.
@@ -1138,6 +1150,31 @@ Resources:
           Value: !Ref Environment
       Statistic: Sum
       Period: 300
+      EvaluationPeriods: 1
+      Threshold: 0
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref AlarmTopic
+
+  UnpricedRequestsAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "${ProjectName}-${Environment}-unpriced-requests"
+      AlarmDescription: >-
+        단가 표에 없는 모델로 요청이 처리되고 있다. 그 요청은 비용이 0으로
+        집계되므로 대시보드 비용이 실제보다 낮고, 그만큼 월 예산이 늦게
+        걸리며 청구 배분에서 빠진다. AWS Price List API 에도 없는 신규
+        모델이 있어 자동으로 채울 수 없다. scripts/sync_pricing.py 로
+        확인한 뒤 src/llmgw/pricing.json 에 단가를 추가하거나,
+        UnpricedModelPolicy 를 reject/hide 로 바꾼다.
+      Namespace: LLMGateway
+      MetricName: UnpricedRequests
+      Dimensions:
+        - Name: Environment
+          Value: !Ref Environment
+      Statistic: Sum
+      Period: 3600
       EvaluationPeriods: 1
       Threshold: 0
       ComparisonOperator: GreaterThanThreshold
