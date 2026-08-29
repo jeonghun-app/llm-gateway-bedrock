@@ -33,6 +33,9 @@
 - **깨진 CI 액션 핀 교정.** `actions/upload-artifact@v4.6.1` 과
   `docker/build-push-action@v6.15.0` 의 커밋 SHA 가 손상돼 워크플로가 "Set
   up job" 단계에서 즉시 실패하던 것을 실제 릴리스 SHA 로 바로잡았다.
+- **Node 22 하네스 호환.** `admin_ui_harness.js` 가 `global.navigator` 를
+  직접 할당해, 이를 getter 전용으로 노출하는 Node 22+ 러너에서 `TypeError`
+  로 실패하던 것을 `Object.defineProperty` 로 교정했다.
 
 ## [1.2.1] - 2026-08-29
 
