@@ -19,6 +19,7 @@ from llmgw import apikey
 from llmgw import clock
 from llmgw import domain
 from llmgw import errors
+from llmgw import oidc
 from llmgw import schemas
 from llmgw import services as services_module
 
@@ -897,3 +898,187 @@ def list_bedrock_models(services: services_module.AdminDep) -> _JsonDict:
             for model_id in model_ids
         ]
     }
+
+
+# ---------------------------------------------------------------------------
+# 계정별 외부 인증(OIDC) 설정
+# ---------------------------------------------------------------------------
+
+
+def _auth_config_view(config: domain.AccountAuthConfig) -> _JsonDict:
+    """인증 설정을 응답 형태로 바꾼다.
+
+    비밀값은 없다. 발급자·청중·클레임 이름은 모두 공개 설정이고, 서명 키는
+    IdP 가 공개하는 JWKS 에서 가져온다.
+
+    Args:
+        config: 인증 설정.
+
+    Returns:
+        JSON 직렬화 가능한 딕셔너리.
+    """
+    return {
+        "account_id": config.account_id,
+        "issuer": config.issuer,
+        "jwks_url": config.jwks_url,
+        "effective_jwks_url": config.effective_jwks_url,
+        "audience": config.audience,
+        "user_claim": config.user_claim,
+        "team_claim": config.team_claim,
+        "groups_claim": config.groups_claim,
+        "admin_groups": config.admin_groups,
+        "auto_provision": config.auto_provision,
+        "provision_allowed_models": config.provision_allowed_models,
+        "provision_budget_usd": (
+            float(config.provision_budget_usd)
+            if config.provision_budget_usd is not None
+            else None
+        ),
+        "status": config.status.value,
+        "created_at": config.created_at,
+        "updated_at": config.updated_at,
+    }
+
+
+@router.get("/accounts/{account_id}/auth")
+def get_auth_config(
+    account_id: str, services: services_module.AdminDep
+) -> _JsonDict:
+    """계정의 외부 인증 설정을 조회한다.
+
+    Args:
+        account_id: 계정 ID.
+        services: 서비스 컨테이너.
+
+    Returns:
+        인증 설정. 설정이 없으면 `configured: false` 만 담아 반환한다.
+
+    Raises:
+        ResourceNotFoundError: 계정이 없는 경우.
+    """
+    _require_account(services, account_id)
+    config = services.registry.get_auth_config(account_id)
+    if config is None:
+        return {"account_id": account_id, "configured": False}
+    view = _auth_config_view(config)
+    view["configured"] = True
+    return view
+
+
+@router.put("/accounts/{account_id}/auth")
+def put_auth_config(
+    account_id: str,
+    payload: schemas.PutAuthConfigRequest,
+    services: services_module.AdminDep,
+) -> _JsonDict:
+    """계정의 외부 인증 설정을 만들거나 갱신한다.
+
+    발급자는 계정 간에 겹칠 수 없다. 다른 계정이 쓰는 발급자를 등록하려 하면
+    409 로 거부된다. 가로챌 수 있으면 그 계정 사용자로 위장할 수 있다.
+
+    Args:
+        account_id: 계정 ID.
+        payload: 설정 값.
+        services: 서비스 컨테이너.
+
+    Returns:
+        저장된 설정.
+
+    Raises:
+        ResourceNotFoundError: 계정이 없는 경우.
+        ResourceConflictError: 발급자가 다른 계정에 이미 등록된 경우.
+        InvalidRequestError: JWKS URL 이 https 가 아니거나 내부 주소인 경우.
+    """
+    _require_account(services, account_id)
+    existing = services.registry.get_auth_config(account_id)
+    now = clock.to_iso(services.clock.now())
+    config = domain.AccountAuthConfig(
+        account_id=account_id,
+        issuer=payload.issuer,
+        jwks_url=payload.jwks_url,
+        audience=payload.audience,
+        user_claim=payload.user_claim,
+        team_claim=payload.team_claim,
+        groups_claim=payload.groups_claim,
+        admin_groups=payload.admin_groups,
+        auto_provision=payload.auto_provision,
+        provision_allowed_models=payload.provision_allowed_models,
+        provision_budget_usd=payload.provision_budget_usd,
+        status=existing.status if existing else domain.EntityStatus.ACTIVE,
+        created_at=existing.created_at if existing else now,
+        updated_at=now,
+    )
+    # 저장 전에 JWKS URL 을 검증한다. 잘못된 값을 저장해 두면 그 계정의 모든
+    # 토큰 검증이 실패하고, 원인이 설정에 있다는 것을 알기 어렵다.
+    oidc.validate_jwks_url(config.effective_jwks_url)
+    services.registry.put_auth_config(config, overwrite=existing is not None)
+    services.logger.info(
+        "계정 외부 인증 설정을 저장했다",
+        extra={"account_id": account_id, "issuer": config.issuer},
+    )
+    return _auth_config_view(config)
+
+
+@router.post("/accounts/{account_id}/auth/status")
+def set_auth_config_status(
+    account_id: str,
+    payload: schemas.UpdateStatusRequest,
+    services: services_module.AdminDep,
+) -> _JsonDict:
+    """계정의 외부 인증을 즉시 켜거나 끈다.
+
+    설정을 지우지 않고 차단할 수 있어야 한다. IdP 쪽 문제로 급히 막아야 할 때
+    설정을 다시 입력하지 않고 되돌릴 수 있다.
+
+    Args:
+        account_id: 계정 ID.
+        payload: 상태 값.
+        services: 서비스 컨테이너.
+
+    Returns:
+        갱신된 설정.
+
+    Raises:
+        ResourceNotFoundError: 계정 또는 설정이 없는 경우.
+    """
+    _require_account(services, account_id)
+    existing = services.registry.get_auth_config(account_id)
+    if existing is None:
+        raise errors.ResourceNotFoundError("인증 설정이 없다.")
+    updated = existing.model_copy(
+        update={
+            "status": domain.EntityStatus(payload.status),
+            "updated_at": clock.to_iso(services.clock.now()),
+        }
+    )
+    services.registry.put_auth_config(updated, overwrite=True)
+    services.logger.info(
+        "계정 외부 인증 상태를 변경했다",
+        extra={"account_id": account_id, "status": payload.status},
+    )
+    return _auth_config_view(updated)
+
+
+@router.delete(
+    "/accounts/{account_id}/auth", status_code=http.HTTPStatus.NO_CONTENT
+)
+def delete_auth_config(
+    account_id: str, services: services_module.AdminDep
+) -> None:
+    """계정의 외부 인증 설정을 삭제한다.
+
+    설정과 발급자 역인덱스가 함께 사라진다. 역인덱스만 남으면 다른 계정이 그
+    발급자를 영구히 쓸 수 없게 된다.
+
+    Args:
+        account_id: 계정 ID.
+        services: 서비스 컨테이너.
+
+    Raises:
+        ResourceNotFoundError: 계정 또는 설정이 없는 경우.
+    """
+    _require_account(services, account_id)
+    services.registry.delete_auth_config(account_id)
+    services.logger.info(
+        "계정 외부 인증 설정을 삭제했다", extra={"account_id": account_id}
+    )

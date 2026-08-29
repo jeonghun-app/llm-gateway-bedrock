@@ -363,6 +363,110 @@
         "title": "HTTPValidationError",
         "type": "object"
       },
+      "PutAuthConfigRequest": {
+        "additionalProperties": false,
+        "description": "계정 외부 인증(OIDC) 설정 요청.\n\n고객이 이미 쓰는 인증 서버를 계정에 붙인다. 발급자는 계정 간에 겹칠 수\n없다. 발급자로 토큰이 어느 계정 것인지 판별하기 때문이다.\n\nAttributes:\n    issuer: OIDC 발급자 URL. 토큰의 `iss` 와 정확히 일치해야 한다.\n    jwks_url: JWKS 문서 URL. 생략하면 발급자에서 표준 경로를 만든다.\n        https 여야 하고 내부 네트워크 주소는 거부된다.\n    audience: 허용 클라이언트 ID. 쉼표로 구분한다. 생략하면 청중을\n        검사하지 않는다.\n    user_claim: 사용자 ID 로 쓸 클레임 이름.\n    team_claim: 팀 ID 로 쓸 클레임 이름. 생략하면 팀 없이 동작한다.\n    groups_claim: 그룹 목록 클레임 이름. Cognito 는 `cognito:groups` 다.\n    admin_groups: 이 계정의 관리자로 인정할 그룹. 쉼표로 구분한다.\n    auto_provision: 사용자가 없을 때 자동 생성할지 여부. 켜면 예산을\n        반드시 지정해야 한다.\n    provision_allowed_models: 자동 생성 사용자의 허용 모델. 쉼표 구분.\n    provision_budget_usd: 자동 생성 사용자의 월 예산.",
+        "properties": {
+          "admin_groups": {
+            "default": "",
+            "maxLength": 512,
+            "title": "Admin Groups",
+            "type": "string"
+          },
+          "audience": {
+            "default": "",
+            "maxLength": 512,
+            "title": "Audience",
+            "type": "string"
+          },
+          "auto_provision": {
+            "default": false,
+            "title": "Auto Provision",
+            "type": "boolean"
+          },
+          "groups_claim": {
+            "default": "cognito:groups",
+            "maxLength": 64,
+            "title": "Groups Claim",
+            "type": "string"
+          },
+          "issuer": {
+            "maxLength": 512,
+            "minLength": 8,
+            "title": "Issuer",
+            "type": "string"
+          },
+          "jwks_url": {
+            "default": "",
+            "maxLength": 512,
+            "title": "Jwks Url",
+            "type": "string"
+          },
+          "provision_allowed_models": {
+            "default": "",
+            "maxLength": 1024,
+            "title": "Provision Allowed Models",
+            "type": "string"
+          },
+          "provision_budget_usd": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Provision Budget Usd"
+          },
+          "team_claim": {
+            "default": "",
+            "maxLength": 64,
+            "title": "Team Claim",
+            "type": "string"
+          },
+          "user_claim": {
+            "default": "email",
+            "maxLength": 64,
+            "title": "User Claim",
+            "type": "string"
+          }
+        },
+        "required": [
+          "issuer"
+        ],
+        "title": "PutAuthConfigRequest",
+        "type": "object"
+      },
+      "SelfIssueKeyRequest": {
+        "additionalProperties": false,
+        "description": "셀프서비스 키 발급 요청.\n\n계정·사용자는 토큰에서 결정하므로 본문으로 받지 않는다. 받으면 다른\n사용자에게 키를 발급하는 경로가 열린다.\n\nAttributes:\n    name: 키 표시 이름. 어디에 쓰는 키인지 구분하는 용도다.\n    allowed_models: 이 키로 호출할 수 있는 모델. 생략하면 계정 설정의\n        기본값을 따른다. 계정이 정한 범위를 넘길 수는 없다.",
+        "properties": {
+          "allowed_models": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Allowed Models",
+            "type": "array"
+          },
+          "name": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "title": "SelfIssueKeyRequest",
+        "type": "object"
+      },
       "UpdateAccountRequest": {
         "additionalProperties": false,
         "description": "계정 수정 요청.\n\n부분 수정이다. 요청 본문에 실린 필드만 반영한다. `monthly_budget_usd`\n를 `null` 로 명시하면 예산을 무제한으로 되돌린다. 필드를 아예 빼면 기존\n값을 유지한다. 두 경우를 구분하기 위해 `model_fields_set` 을 본다.\n\n문자열 필드는 `null` 을 허용하지 않는다. 도메인 모델에서 이름은 항상\n문자열이어야 하는데, `null` 을 그대로 저장하면 불변식이 깨지기 때문이다.\n값을 비우려면 예산처럼 `null` 을 쓰는 대신 빈 문자열을 명시해야 하는\n필드(이메일 등)만 그렇게 다룬다.\n\nAttributes:\n    name: 표시 이름. 보내면 비어 있지 않아야 한다.\n    monthly_budget_usd: 월 예산. `null` 이면 무제한.",
@@ -937,6 +1041,321 @@
           }
         },
         "summary": "Update Account",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/admin/accounts/{account_id}/auth": {
+      "delete": {
+        "description": "계정의 외부 인증 설정을 삭제한다.\n\n설정과 발급자 역인덱스가 함께 사라진다. 역인덱스만 남으면 다른 계정이 그\n발급자를 영구히 쓸 수 없게 된다.\n\nArgs:\n    account_id: 계정 ID.\n    services: 서비스 컨테이너.\n\nRaises:\n    ResourceNotFoundError: 계정 또는 설정이 없는 경우.",
+        "operationId": "delete_auth_config_admin_accounts__account_id__auth_delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "account_id",
+            "required": true,
+            "schema": {
+              "title": "Account Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Admin-Token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Token"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete Auth Config",
+        "tags": [
+          "admin"
+        ]
+      },
+      "get": {
+        "description": "계정의 외부 인증 설정을 조회한다.\n\nArgs:\n    account_id: 계정 ID.\n    services: 서비스 컨테이너.\n\nReturns:\n    인증 설정. 설정이 없으면 `configured: false` 만 담아 반환한다.\n\nRaises:\n    ResourceNotFoundError: 계정이 없는 경우.",
+        "operationId": "get_auth_config_admin_accounts__account_id__auth_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "account_id",
+            "required": true,
+            "schema": {
+              "title": "Account Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Admin-Token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Token"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Get Auth Config Admin Accounts  Account Id  Auth Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Auth Config",
+        "tags": [
+          "admin"
+        ]
+      },
+      "put": {
+        "description": "계정의 외부 인증 설정을 만들거나 갱신한다.\n\n발급자는 계정 간에 겹칠 수 없다. 다른 계정이 쓰는 발급자를 등록하려 하면\n409 로 거부된다. 가로챌 수 있으면 그 계정 사용자로 위장할 수 있다.\n\nArgs:\n    account_id: 계정 ID.\n    payload: 설정 값.\n    services: 서비스 컨테이너.\n\nReturns:\n    저장된 설정.\n\nRaises:\n    ResourceNotFoundError: 계정이 없는 경우.\n    ResourceConflictError: 발급자가 다른 계정에 이미 등록된 경우.\n    InvalidRequestError: JWKS URL 이 https 가 아니거나 내부 주소인 경우.",
+        "operationId": "put_auth_config_admin_accounts__account_id__auth_put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "account_id",
+            "required": true,
+            "schema": {
+              "title": "Account Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Admin-Token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Token"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PutAuthConfigRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Put Auth Config Admin Accounts  Account Id  Auth Put",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Put Auth Config",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/admin/accounts/{account_id}/auth/status": {
+      "post": {
+        "description": "계정의 외부 인증을 즉시 켜거나 끈다.\n\n설정을 지우지 않고 차단할 수 있어야 한다. IdP 쪽 문제로 급히 막아야 할 때\n설정을 다시 입력하지 않고 되돌릴 수 있다.\n\nArgs:\n    account_id: 계정 ID.\n    payload: 상태 값.\n    services: 서비스 컨테이너.\n\nReturns:\n    갱신된 설정.\n\nRaises:\n    ResourceNotFoundError: 계정 또는 설정이 없는 경우.",
+        "operationId": "set_auth_config_status_admin_accounts__account_id__auth_status_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "account_id",
+            "required": true,
+            "schema": {
+              "title": "Account Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Admin-Token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Token"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateStatusRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Set Auth Config Status Admin Accounts  Account Id  Auth Status Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Set Auth Config Status",
         "tags": [
           "admin"
         ]
@@ -3377,6 +3796,222 @@
         "summary": "Timeseries",
         "tags": [
           "analytics"
+        ]
+      }
+    },
+    "/auth/keys": {
+      "get": {
+        "description": "자기 키 목록을 반환한다. 평문은 포함하지 않는다.\n\nArgs:\n    services: 서비스 컨테이너.\n    authorization: `Bearer <jwt>` 헤더.\n\nReturns:\n    본인에게 귀속된 키 목록.",
+        "operationId": "list_own_keys_auth_keys_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response List Own Keys Auth Keys Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Own Keys",
+        "tags": [
+          "self-service"
+        ]
+      },
+      "post": {
+        "description": "토큰 주체 자신에게 API 키를 발급한다.\n\n평문 키는 이 응답에서만 볼 수 있다. 저장소에는 SHA-256 해시만 남는다.\n\nArgs:\n    payload: 키 이름과 원하는 허용 모델.\n    services: 서비스 컨테이너.\n    authorization: `Bearer <jwt>` 헤더.\n\nReturns:\n    발급된 키 정보와 평문 키.\n\nRaises:\n    AuthenticationError: 토큰이 유효하지 않은 경우.\n    PermissionDeniedError: 사용자가 등록되지 않았고 자동 생성도 꺼져\n        있는 경우.",
+        "operationId": "issue_own_key_auth_keys_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SelfIssueKeyRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Issue Own Key Auth Keys Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Issue Own Key",
+        "tags": [
+          "self-service"
+        ]
+      }
+    },
+    "/auth/keys/{key_id}": {
+      "delete": {
+        "description": "자기 키를 폐기한다.\n\n남의 키를 지우지 못하게 소유자를 확인한다. 확인 없이 지우면 키 ID 만\n알아도 다른 사용자의 키를 무효화할 수 있다.\n\nArgs:\n    key_id: 폐기할 키 ID.\n    services: 서비스 컨테이너.\n    authorization: `Bearer <jwt>` 헤더.\n\nRaises:\n    ResourceNotFoundError: 키가 없거나 본인 것이 아닌 경우.",
+        "operationId": "revoke_own_key_auth_keys__key_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "key_id",
+            "required": true,
+            "schema": {
+              "title": "Key Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Revoke Own Key",
+        "tags": [
+          "self-service"
+        ]
+      }
+    },
+    "/auth/me": {
+      "get": {
+        "description": "토큰이 어떤 계정·팀·사용자로 해석되는지 보여준다.\n\n클레임 매핑이 의도대로 됐는지 확인하는 용도다. 매핑이 틀리면 사용량이\n엉뚱한 축에 집계되므로, 키를 발급하기 전에 확인할 수 있어야 한다.\n\nArgs:\n    services: 서비스 컨테이너.\n    authorization: `Bearer <jwt>` 헤더.\n\nReturns:\n    해석된 주체 정보. 토큰 원문이나 서명은 포함하지 않는다.",
+        "operationId": "whoami_auth_me_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Whoami Auth Me Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Whoami",
+        "tags": [
+          "self-service"
         ]
       }
     },

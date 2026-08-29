@@ -35,6 +35,7 @@ from llmgw import observability
 from llmgw import services as services_module
 from llmgw.routers import admin as admin_router
 from llmgw.routers import analytics as analytics_router
+from llmgw.routers import auth_self as auth_self_router
 from llmgw.routers import health as health_router
 from llmgw.routers import openai_compat as openai_router
 
@@ -104,6 +105,7 @@ def create_app_with_services(
     app.include_router(openai_router.router)
     app.include_router(admin_router.router)
     app.include_router(analytics_router.router)
+    app.include_router(auth_self_router.router)
 
     if _STATIC_DIR.is_dir():
         app.mount(

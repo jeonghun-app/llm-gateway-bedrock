@@ -390,3 +390,164 @@ def test_계정을경로로받는모든관리라우트가범위를강제한다(
             )
 
     assert len(checked) >= 20, f"검사한 라우트가 너무 적다: {checked}"
+
+
+# ---------------------------------------------------------------------------
+# 인증 설정 관리 API
+# ---------------------------------------------------------------------------
+
+
+def test_인증설정을만들고조회하고삭제한다(
+    admin_oidc_client: testclient.TestClient,
+    settings: config.Settings,
+    api_key: str,
+) -> None:
+    # Arrange
+    del api_key
+    headers = {"X-Admin-Token": settings.admin_token}
+    body = {
+        "issuer": _ISSUER,
+        "audience": "client-1",
+        "user_claim": "preferred_username",
+        "admin_groups": _ACCOUNT_ADMIN_GROUP,
+    }
+
+    # Act
+    empty = admin_oidc_client.get("/admin/accounts/acme/auth", headers=headers)
+    created = admin_oidc_client.put(
+        "/admin/accounts/acme/auth", headers=headers, json=body
+    )
+    fetched = admin_oidc_client.get(
+        "/admin/accounts/acme/auth", headers=headers
+    )
+    removed = admin_oidc_client.delete(
+        "/admin/accounts/acme/auth", headers=headers
+    )
+    after = admin_oidc_client.get("/admin/accounts/acme/auth", headers=headers)
+
+    # Assert
+    assert empty.status_code == 200
+    assert empty.json()["configured"] is False
+    assert created.status_code == 200, created.text
+    assert fetched.json()["configured"] is True
+    assert fetched.json()["issuer"] == _ISSUER
+    assert fetched.json()["effective_jwks_url"].endswith("/jwks.json")
+    assert removed.status_code == 204
+    assert after.json()["configured"] is False
+
+
+def test_인증설정을끄면토큰이거부된다(
+    admin_oidc_client: testclient.TestClient,
+    settings: config.Settings,
+    registry: repository.RegistryRepository,
+    api_key: str,
+    rsa_keys: tuple[typing.Any, typing.Any],
+) -> None:
+    """UI 에서 즉시 차단할 수 있어야 한다."""
+    # Arrange
+    del api_key
+    private, _ = rsa_keys
+    _register_auth(registry)
+    headers = {"X-Admin-Token": settings.admin_token}
+    token = _token(private, groups=[_ACCOUNT_ADMIN_GROUP])
+    assert (
+        admin_oidc_client.get(
+            "/admin/accounts/acme", headers=_headers(token)
+        ).status_code
+        == 200
+    )
+
+    # Act
+    toggled = admin_oidc_client.post(
+        "/admin/accounts/acme/auth/status",
+        headers=headers,
+        json={"status": "disabled"},
+    )
+    blocked = admin_oidc_client.get(
+        "/admin/accounts/acme", headers=_headers(token)
+    )
+
+    # Assert
+    assert toggled.status_code == 200, toggled.text
+    assert toggled.json()["status"] == "disabled"
+    assert blocked.status_code == 403
+
+
+def test_내부주소JWKS는저장단계에서거부된다(
+    admin_oidc_client: testclient.TestClient,
+    settings: config.Settings,
+    api_key: str,
+) -> None:
+    """잘못된 값을 저장해 두면 그 계정의 모든 토큰 검증이 실패하고 원인이
+    설정에 있다는 것을 알기 어렵다. SSRF 통로이기도 하다."""
+    # Arrange
+    del api_key
+    headers = {"X-Admin-Token": settings.admin_token}
+
+    # Act
+    response = admin_oidc_client.put(
+        "/admin/accounts/acme/auth",
+        headers=headers,
+        json={
+            "issuer": _ISSUER,
+            "jwks_url": "https://169.254.169.254/latest/meta-data/",
+        },
+    )
+
+    # Assert
+    assert response.status_code == 400
+    assert "내부 네트워크" in response.json()["error"]["message"]
+
+
+def test_다른계정이쓰는발급자는409(
+    admin_oidc_client: testclient.TestClient,
+    settings: config.Settings,
+    registry: repository.RegistryRepository,
+    api_key: str,
+) -> None:
+    """발급자를 가로채면 그 계정 사용자로 위장할 수 있다."""
+    # Arrange
+    del api_key
+    headers = {"X-Admin-Token": settings.admin_token}
+    registry.put_account(domain.Account(account_id="beta", name="Beta"))
+    _register_auth(registry)
+
+    # Act
+    response = admin_oidc_client.put(
+        "/admin/accounts/beta/auth",
+        headers=headers,
+        json={"issuer": _ISSUER},
+    )
+
+    # Assert
+    assert response.status_code == 409
+
+
+def test_계정관리자는자기계정인증설정을바꿀수있다(
+    admin_oidc_client: testclient.TestClient,
+    registry: repository.RegistryRepository,
+    api_key: str,
+    rsa_keys: tuple[typing.Any, typing.Any],
+) -> None:
+    """고객이 자기 IdP 설정을 스스로 관리하는 것이 이 기능의 목적이다."""
+    # Arrange
+    del api_key
+    private, _ = rsa_keys
+    _register_auth(registry)
+    token = _token(private, groups=[_ACCOUNT_ADMIN_GROUP])
+
+    # Act
+    response = admin_oidc_client.put(
+        "/admin/accounts/acme/auth",
+        headers=_headers(token),
+        json={
+            "issuer": _ISSUER,
+            "user_claim": "preferred_username",
+            "admin_groups": _ACCOUNT_ADMIN_GROUP,
+            "audience": "new-client",
+        },
+    )
+
+    # Assert
+    assert response.status_code == 200, response.text
+    assert response.json()["audience"] == "new-client"
