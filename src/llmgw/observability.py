@@ -168,6 +168,24 @@ class MetricsEmitter:
         )
         self._flush(emitter)
 
+    def emit_unpriced_request(self, model_id: str) -> None:
+        """단가 표에 없는 모델로 처리된 요청을 메트릭으로 올린다.
+
+        이 값이 0 이 아니면 비용 집계가 실제보다 낮고, 그만큼 월 예산이
+        늦게 걸린다. 로그만 남기면 아무도 보지 않으므로 알람을 걸 수 있는
+        메트릭으로 만든다.
+
+        Args:
+            model_id: 단가를 찾지 못한 모델 ID.
+        """
+        emitter = pt_metrics.EphemeralMetrics(namespace=self._namespace)
+        emitter.add_dimension(name="Environment", value=self._environment)
+        emitter.add_dimension(name="Model", value=model_id)
+        emitter.add_metric(
+            name="UnpricedRequests", unit=_MetricUnit.Count, value=1
+        )
+        self._flush(emitter)
+
     def emit_usage_write_failure(self) -> None:
         """사용량 기록 최종 실패를 메트릭으로 남긴다.
 

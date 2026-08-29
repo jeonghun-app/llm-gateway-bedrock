@@ -119,6 +119,13 @@ class Authenticator:
             raise errors.AuthenticationError(
                 "API 키가 유효하지 않거나 비활성 상태다."
             )
+        # 만료된 키는 삭제하지 않고 거부만 한다. 지우면 사용량 집계의
+        # `KEY#<key_id>` 축에 이름을 붙일 수 없다. 만료 사실을 별도 메시지로
+        # 알려주지 않는 것은 키 열거 공격의 신호를 줄이기 위해서다.
+        if api_key.is_expired(self._clock.now()):
+            raise errors.AuthenticationError(
+                "API 키가 유효하지 않거나 비활성 상태다."
+            )
 
         account = self._load_account(api_key.account_id)
         if account is None or account.status is not domain.EntityStatus.ACTIVE:
@@ -160,6 +167,13 @@ class Authenticator:
             team_budget_usd=team.monthly_budget_usd if team else None,
             user_budget_usd=user.monthly_budget_usd if user else None,
             key_budget_usd=api_key.monthly_budget_usd,
+            # 키 한도가 사용자 한도를 덮어쓴다. 더 좁은 범위가 우선한다.
+            rpm_limit=(
+                api_key.rpm_limit
+                if api_key.rpm_limit is not None
+                else user.rpm_limit
+            ),
+            rate_scope=f"KEY#{api_key.key_id}",
         )
 
     def _authenticate_oidc(self, token: str) -> domain.Principal:
@@ -226,6 +240,9 @@ class Authenticator:
             team_budget_usd=team.monthly_budget_usd if team else None,
             user_budget_usd=user.monthly_budget_usd,
             key_budget_usd=None,
+            rpm_limit=user.rpm_limit,
+            # 키가 없으므로 사용자 단위로 센다.
+            rate_scope=f"USER#{identity.user_id}",
         )
 
     def _provision_user(self, identity: oidc.VerifiedIdentity) -> domain.User:
@@ -295,6 +312,49 @@ class Authenticator:
         if requested not in permitted:
             raise errors.PermissionDeniedError(
                 f"이 키로 호출할 수 없는 모델이다: {model_id}"
+            )
+
+    def enforce_rate_limit(
+        self, principal: domain.Principal, now: datetime.datetime
+    ) -> None:
+        """분당 요청 한도를 확인하고 소비한다.
+
+        월 예산은 사후 통제다. 한 달 한도가 남아 있어도 폭주 루프가 몇 분 안에
+        큰 비용을 만들 수 있다. 이 검사는 그 앞을 막는다.
+
+        한도가 설정돼 있지 않으면 DynamoDB 를 건드리지 않는다. 한도 미설정이
+        기본값이므로 이 경우 요청 경로에 왕복이 늘지 않는다.
+
+        분당 요청만 센다. 분당 **토큰**은 요청 전에 출력 토큰 수를 알 수
+        없어서 정확히 예약할 수 없다. `max_tokens` 는 선택 필드라 비어 있는
+        요청이 많고, 그 값으로 예약하면 지정한 클라이언트만 불리해진다.
+
+        Args:
+            principal: 인증된 호출 주체.
+            now: 현재 시각. 분 버킷을 정하는 데 쓴다.
+
+        Raises:
+            RateLimitExceededError: 이번 분의 한도를 이미 채운 경우.
+        """
+        limit = principal.rpm_limit
+        if limit is None or not principal.rate_scope:
+            return
+        minute = now.strftime("%Y-%m-%dT%H:%M")
+        allowed = self._usage_store.try_consume_rate_limit(
+            account_id=principal.account_id,
+            scope=principal.rate_scope,
+            minute=minute,
+            limit=limit,
+            now=now,
+        )
+        if not allowed:
+            # 다음 분 경계까지 남은 초를 알려준다. 클라이언트가 그보다 빨리
+            # 재시도하면 다시 거부되어 서로 부하만 늘어난다.
+            retry_after = max(1, 60 - now.second)
+            raise errors.RateLimitExceededError(
+                f"분당 요청 한도를 초과했다: {limit} RPM."
+                f" {retry_after}초 뒤에 다시 시도한다.",
+                retry_after_seconds=retry_after,
             )
 
     def enforce_budget(

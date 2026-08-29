@@ -51,6 +51,58 @@ def _sse(payload: dict[str, typing.Any]) -> str:
     return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
 
 
+def _visible_models(services: services_module.Services) -> tuple[str, ...]:
+    """정책에 따라 노출할 모델 목록을 만든다.
+
+    `hide` 정책이면 단가 표에 없는 모델을 목록에서 뺀다. 클라이언트가 그것을
+    고르면 비용이 0으로 집계되어 청구 배분과 예산 검사가 어긋난다. 감추기만
+    하고 명시적 호출은 막지 않는 이유는, 새 모델을 급히 써야 하는 상황을
+    완전히 봉쇄하지 않기 위해서다. 봉쇄가 필요하면 `reject` 를 쓴다.
+
+    Args:
+        services: 서비스 컨테이너.
+
+    Returns:
+        노출할 모델 ID 목록.
+    """
+    available = services.bedrock.list_model_ids()
+    if services.settings.unpriced_model_policy != "hide":
+        return tuple(available)
+    known = set(services.pricing.known_model_ids())
+    return tuple(
+        model_id
+        for model_id in available
+        if pricing_module.normalize_model_id(model_id) in known
+    )
+
+
+def _enforce_pricing_policy(
+    services: services_module.Services, model_id: str
+) -> None:
+    """단가를 모르는 모델 요청을 정책에 따라 거부한다.
+
+    `reject` 정책은 비용 귀속을 보장한다. 단가가 없으면 비용이 0으로
+    집계되고, 그러면 월 예산이 영원히 걸리지 않으며 청구 배분에서도 빠진다.
+    그 상태를 허용할 수 없는 조직을 위한 선택지다.
+
+    Args:
+        services: 서비스 컨테이너.
+        model_id: 요청한 모델 ID.
+
+    Raises:
+        InvalidRequestError: `reject` 정책이고 단가가 없는 경우.
+    """
+    if services.settings.unpriced_model_policy != "reject":
+        return
+    if services.pricing.get(model_id) is not None:
+        return
+    raise errors.InvalidRequestError(
+        f"이 모델의 단가가 등록되지 않아 요청을 거부한다: {model_id}."
+        " 비용 귀속을 보장할 수 없기 때문이다. pricing.json 에 단가를"
+        " 추가하거나 LLMGW_UNPRICED_MODEL_POLICY 를 조정한다."
+    )
+
+
 @router.get("/models")
 def list_models(
     services: services_module.ServicesDep,
@@ -74,7 +126,7 @@ def list_models(
         AuthenticationError: API 키가 유효하지 않은 경우.
     """
     principal = services.authenticator.authenticate(authorization)
-    available = services.bedrock.list_model_ids()
+    available = _visible_models(services)
     if not principal.allowed_models:
         return translate.build_model_list(available)
 
@@ -126,6 +178,8 @@ def chat_completions(
     principal = services.authenticator.authenticate(authorization)
 
     try:
+        services.authenticator.enforce_rate_limit(principal, started_at)
+        _enforce_pricing_policy(services, payload.model)
         services.authenticator.enforce_model(principal, payload.model)
         services.authenticator.enforce_budget(principal, started_at)
         bedrock_request = translate.to_bedrock_request(payload)

@@ -72,6 +72,7 @@ def _user_payload(user: domain.User) -> _JsonDict:
             if user.monthly_budget_usd is not None
             else None
         ),
+        "rpm_limit": user.rpm_limit,
         "status": user.status.value,
         "created_at": user.created_at,
     }
@@ -96,6 +97,8 @@ def _key_payload(api_key: domain.ApiKey) -> _JsonDict:
             if api_key.monthly_budget_usd is not None
             else None
         ),
+        "rpm_limit": api_key.rpm_limit,
+        "expires_at": api_key.expires_at,
         "status": api_key.status.value,
         "created_at": api_key.created_at,
         "last_used_at": api_key.last_used_at,
@@ -500,6 +503,7 @@ def create_user(
         email=payload.email,
         team_id=payload.team_id,
         monthly_budget_usd=payload.monthly_budget_usd,
+        rpm_limit=payload.rpm_limit,
         created_at=clock.to_iso(services.clock.now()),
     )
     services.registry.put_user(user)
@@ -564,6 +568,7 @@ def update_user(
             "email": "email",
             "team_id": "team_id",
             "monthly_budget_usd": "monthly_budget_usd",
+            "rpm_limit": "rpm_limit",
         },
     )
     updated = user.model_copy(update=changes)
@@ -674,6 +679,8 @@ def create_api_key(
         name=payload.name,
         allowed_models=tuple(payload.allowed_models),
         monthly_budget_usd=payload.monthly_budget_usd,
+        rpm_limit=payload.rpm_limit,
+        expires_at=payload.expires_at,
         created_at=clock.to_iso(services.clock.now()),
     )
     services.registry.put_api_key(api_key)
@@ -779,7 +786,12 @@ def update_api_key(
     api_key = _require_api_key(services, account_id, key_id)
     changes = _apply_updates(
         payload,
-        {"name": "name", "monthly_budget_usd": "monthly_budget_usd"},
+        {
+            "name": "name",
+            "monthly_budget_usd": "monthly_budget_usd",
+            "rpm_limit": "rpm_limit",
+            "expires_at": "expires_at",
+        },
     )
     if "allowed_models" in payload.model_fields_set:
         changes["allowed_models"] = tuple(payload.allowed_models or [])

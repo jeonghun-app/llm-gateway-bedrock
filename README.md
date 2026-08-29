@@ -518,6 +518,7 @@ LLMGW_BASE_URL="$GATEWAY_URL" LLMGW_ADMIN_TOKEN="$ADMIN_TOKEN" \
 | `LLMGW_USAGE_AGG_TABLE` | 아니오 | `llmgw-dev-usage-agg` | 집계 테이블 |
 | `LLMGW_ADMIN_TOKEN` | **예** | (빈 값) | 관리 API·대시보드 토큰. 비면 관리 API가 503 |
 | `LLMGW_DEFAULT_ALLOWED_MODELS` | 아니오 | (빈 값) | 키에 허용 목록이 없을 때 적용. 쉼표 구분. 비면 전체 허용 |
+| `LLMGW_UNPRICED_MODEL_POLICY` | 아니오 | `allow` | 단가 표에 없는 모델 처리. `allow`(통과·비용 0) / `reject`(거부) / `hide`(목록에서 감춤) |
 | `LLMGW_USAGE_TTL_DAYS` | 아니오 | `90` | usage 원본 보존 기간 |
 | `LLMGW_PRICING_FILE` | 아니오 | 패키지 내 `pricing.json` | 모델 단가 표 경로 |
 | `LLMGW_LOG_LEVEL` | 아니오 | `INFO` | 로그 레벨 |

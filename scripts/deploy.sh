@@ -51,6 +51,8 @@ USAGE_TTL_DAYS=""
 # 태스크 역할이 호출할 수 있는 기반 모델 ARN 패턴. 비우면 템플릿 기본값
 # (모든 기반 모델)을 쓴다. 특정 모델로 IAM 을 좁히려면 지정한다.
 ALLOWED_BEDROCK_MODEL_ARN=""
+# 단가 표에 없는 모델 처리 방식: allow | reject | hide
+UNPRICED_MODEL_POLICY=""
 ALARM_EMAIL=""
 RUN_SEED="yes"
 RUN_SMOKE="yes"
@@ -95,6 +97,10 @@ usage() {
   --usage-ttl-days <N>      usage 원본 레코드 보존 기간 (기본 90)
   --allowed-model-arn <ARN> 태스크 역할이 호출 가능한 기반 모델 ARN 패턴.
                             비우면 모든 기반 모델. IAM 을 좁히려면 지정한다.
+  --unpriced-model-policy <값>
+                            단가 표에 없는 모델 처리 (allow|reject|hide).
+                            기본 allow. reject 는 비용 귀속을 보장하고,
+                            hide 는 /v1/models 에서 감춘다.
   --alarm-email <메일>      알람 수신 이메일
   --no-seed                 데모 데이터 시드를 건너뛴다
   --no-smoke                스모크 테스트를 건너뛴다
@@ -135,6 +141,7 @@ while [[ $# -gt 0 ]]; do
         --bedrock-region)   BEDROCK_REGION="${2:-}"; shift 2 ;;
         --usage-ttl-days)   USAGE_TTL_DAYS="${2:-}"; shift 2 ;;
         --allowed-model-arn) ALLOWED_BEDROCK_MODEL_ARN="${2:-}"; shift 2 ;;
+        --unpriced-model-policy) UNPRICED_MODEL_POLICY="${2:-}"; shift 2 ;;
         --alarm-email)      ALARM_EMAIL="${2:-}"; shift 2 ;;
         --no-seed)          RUN_SEED="no"; shift ;;
         --no-smoke)         RUN_SMOKE="no"; shift ;;
@@ -320,6 +327,8 @@ optional_overrides=()
     && optional_overrides+=("UsageTtlDays=${USAGE_TTL_DAYS}")
 [[ -n "${ALLOWED_BEDROCK_MODEL_ARN}" ]] \
     && optional_overrides+=("AllowedBedrockModelArn=${ALLOWED_BEDROCK_MODEL_ARN}")
+[[ -n "${UNPRICED_MODEL_POLICY}" ]] \
+    && optional_overrides+=("UnpricedModelPolicy=${UNPRICED_MODEL_POLICY}")
 
 aws_cli cloudformation deploy \
     --stack-name "${APP_STACK}" \
