@@ -317,6 +317,93 @@ def test_delete_api_key_다른계정의키는삭제하지못한다(
     assert registry.get_api_key_by_hash(api_key.key_hash) is not None
 
 
+def test_delete_account_빈계정을삭제한다(
+    registry: repository.RegistryRepository,
+) -> None:
+    # Arrange
+    registry.put_account(_account("acme"))
+
+    # Act
+    registry.delete_account("acme")
+
+    # Assert
+    assert registry.get_account("acme") is None
+
+
+def test_delete_account_하위팀이있으면거부한다(
+    registry: repository.RegistryRepository,
+) -> None:
+    # Arrange
+    registry.put_account(_account("acme"))
+    registry.put_team(
+        domain.Team(account_id="acme", team_id="platform", name="플랫폼")
+    )
+
+    # Act / Assert
+    with pytest.raises(errors.ResourceConflictError):
+        registry.delete_account("acme")
+    assert registry.get_account("acme") is not None
+
+
+def test_delete_account_이미삭제된계정은404(
+    registry: repository.RegistryRepository,
+) -> None:
+    """조회-후-삭제 사이에 다른 요청이 지운 경우를 모사한다.
+
+    조건부 삭제라, 이미 사라진 항목의 삭제는 조용히 성공하지 않고 404 로
+    드러난다. 두 번째 삭제 호출이 첫 번째와 무관하게 성공한 것처럼 보이면
+    호출자가 상태를 오해한다.
+    """
+    # Arrange: 검사만 통과하도록 계정을 만든 뒤, 밑단에서 직접 지운다.
+    registry.put_account(_account("acme"))
+    # 참조 검사(list_*)는 통과하지만 실제 삭제 직전 항목이 없는 상황을
+    # 만들기 위해, 저수준으로 먼저 제거한다.
+    registry._table.delete_item(  # noqa: SLF001 - 경쟁 상황 모사
+        Key={"pk": repository.account_pk("acme"), "sk": "META"}
+    )
+
+    # Act / Assert
+    with pytest.raises(errors.ResourceNotFoundError):
+        registry.delete_account("acme")
+
+
+def test_delete_team_소속사용자가있으면거부한다(
+    registry: repository.RegistryRepository,
+) -> None:
+    # Arrange
+    registry.put_account(_account("acme"))
+    registry.put_team(
+        domain.Team(account_id="acme", team_id="platform", name="플랫폼")
+    )
+    registry.put_user(
+        domain.User(
+            account_id="acme",
+            user_id="alice",
+            name="앨리스",
+            team_id="platform",
+        )
+    )
+
+    # Act / Assert
+    with pytest.raises(errors.ResourceConflictError):
+        registry.delete_team("acme", "platform")
+
+
+def test_delete_user_소유키가있으면거부한다(
+    registry: repository.RegistryRepository,
+) -> None:
+    # Arrange
+    registry.put_account(_account("acme"))
+    registry.put_user(
+        domain.User(account_id="acme", user_id="alice", name="앨리스")
+    )
+    registry.put_api_key(_api_key("key-1", user_id="alice", team_id=""))
+
+    # Act / Assert
+    with pytest.raises(errors.ResourceConflictError):
+        registry.delete_user("acme", "alice")
+
+
 def test_rotate_api_key_해시를교체하고아이템하나만남긴다(
     registry: repository.RegistryRepository,
 ) -> None:

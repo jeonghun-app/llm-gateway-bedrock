@@ -734,6 +734,37 @@ class RegistryRepository:
 
     # -- 삭제 (참조 무결성) --------------------------------------------------
 
+    def _conditional_delete(
+        self, *, partition: str, sort: str, not_found: str
+    ) -> None:
+        """대상이 아직 존재할 때만 삭제한다.
+
+        조회-후-삭제 사이에 다른 요청이 같은 항목을 지웠을 수 있다. 조건 없이
+        지우면 그 경우에도 조용히 204 를 돌려줘, 두 삭제가 모두 성공한 것처럼
+        보인다. `attribute_exists` 조건을 걸어, 이미 사라진 항목의 삭제는
+        404 로 드러낸다. 이것으로 부모 삭제 쪽 경쟁 창을 좁힌다. 자식이 그
+        사이 새로 생기는 방향까지 완전히 막으려면 soft delete 나 참조 카운터가
+        필요하다(후속 과제).
+
+        Args:
+            partition: 파티션 키.
+            sort: 정렬 키.
+            not_found: 조건 실패 시 낼 404 메시지.
+
+        Raises:
+            ResourceNotFoundError: 삭제 직전 항목이 이미 사라진 경우.
+        """
+        try:
+            self._table.delete_item(
+                Key={"pk": partition, "sk": sort},
+                ConditionExpression="attribute_exists(pk)",
+            )
+        except botocore.exceptions.ClientError as exc:
+            code = exc.response.get("Error", {}).get("Code")
+            if code == "ConditionalCheckFailedException":
+                raise errors.ResourceNotFoundError(not_found) from exc
+            raise
+
     def delete_account(self, account_id: str) -> None:
         """계정을 삭제한다.
 
@@ -764,8 +795,10 @@ class RegistryRepository:
             raise errors.ResourceConflictError(
                 f"API 키가 남아 있어 계정을 삭제할 수 없다: {account_id}"
             )
-        self._table.delete_item(
-            Key={"pk": account_pk(account_id), "sk": _META_SORT_KEY}
+        self._conditional_delete(
+            partition=account_pk(account_id),
+            sort=_META_SORT_KEY,
+            not_found=f"계정을 찾을 수 없다: {account_id}",
         )
 
     def delete_team(self, account_id: str, team_id: str) -> None:
@@ -796,8 +829,10 @@ class RegistryRepository:
             raise errors.ResourceConflictError(
                 f"소속 API 키가 남아 있어 팀을 삭제할 수 없다: {team_id}"
             )
-        self._table.delete_item(
-            Key={"pk": account_pk(account_id), "sk": team_sk(team_id)}
+        self._conditional_delete(
+            partition=account_pk(account_id),
+            sort=team_sk(team_id),
+            not_found=f"팀을 찾을 수 없다: account={account_id} team={team_id}",
         )
 
     def delete_user(self, account_id: str, user_id: str) -> None:
@@ -824,8 +859,12 @@ class RegistryRepository:
             raise errors.ResourceConflictError(
                 f"소유 API 키가 남아 있어 사용자를 삭제할 수 없다: {user_id}"
             )
-        self._table.delete_item(
-            Key={"pk": account_pk(account_id), "sk": user_sk(user_id)}
+        self._conditional_delete(
+            partition=account_pk(account_id),
+            sort=user_sk(user_id),
+            not_found=(
+                f"사용자를 찾을 수 없다: account={account_id} user={user_id}"
+            ),
         )
 
     def touch_api_key(self, key_hash: str, used_at: str) -> None:
