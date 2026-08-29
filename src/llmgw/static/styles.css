@@ -1,66 +1,147 @@
 /*
- * 대시보드 스타일.
+ * 대시보드 스타일 — Flowbite 디자인 시스템 적용.
  *
- * 외부 CSS 프레임워크를 쓰지 않는다. 컨테이너가 인터넷에 나가지 않고도
- * UI가 온전히 동작해야 하기 때문이다.
+ * Flowbite(Tailwind 기반)의 디자인 토큰과 컴포넌트 해부구조를 그대로
+ * 따르되, 라이브러리를 가져오지 않고 손으로 구현한다. 이유는 두 가지다.
  *
- * 색은 라이트/다크 모두에서 본문 대비 4.5:1 이상을 목표로 골랐다.
+ * 1. Flowbite 는 Tailwind 유틸리티 클래스를 전제하므로 CDN 또는 npm 빌드
+ *    단계가 필요하다. 이 컨테이너는 인터넷에 나가지 않고도 UI 가 온전히
+ *    동작해야 한다(사설망 배포).
+ * 2. 이미지 빌드에 npm 툴체인을 넣지 않는다는 결정을 유지한다.
+ *
+ * 따라서 아래 토큰은 Tailwind 팔레트 값을 그대로 옮긴 것이고, 컴포넌트
+ * 규격(반경, 그림자, 여백 스케일, 표 헤더 대문자 처리, 배지, 버튼 포커스
+ * 링)도 Flowbite 규격을 따른다. 장식용 글리프와 이모지는 쓰지 않는다.
  */
 
 :root {
   color-scheme: light dark;
 
-  --bg: #f6f7f9;
+  /* Tailwind gray */
+  --gray-50: #f9fafb;
+  --gray-100: #f3f4f6;
+  --gray-200: #e5e7eb;
+  --gray-300: #d1d5db;
+  --gray-400: #9ca3af;
+  --gray-500: #6b7280;
+  --gray-600: #4b5563;
+  --gray-700: #374151;
+  --gray-800: #1f2a37;
+  --gray-900: #111928;
+
+  /* Tailwind blue (Flowbite primary) */
+  --primary-50: #eff6ff;
+  --primary-100: #e1effe;
+  --primary-200: #c3ddfd;
+  --primary-600: #1c64f2;
+  --primary-700: #1a56db;
+  --primary-800: #1e429f;
+
+  --green-100: #def7ec;
+  --green-700: #046c4e;
+  --green-800: #03543f;
+  --red-100: #fde8e8;
+  --red-700: #c81e1e;
+  --red-800: #9b1c1c;
+  --yellow-100: #fdf6b2;
+  --yellow-800: #723b13;
+
+  /* 의미 토큰 */
+  --bg: var(--gray-50);
   --surface: #ffffff;
-  --border: #d8dce3;
-  --text: #1b1f24;
-  --text-muted: #59606b;
-  --accent: #0b5fff;
-  --accent-strong: #0842b8;
-  --danger: #b3261e;
-  --ok: #1f7a3d;
+  --surface-subtle: var(--gray-50);
+  --border: var(--gray-200);
+  --border-strong: var(--gray-300);
+  --text: var(--gray-900);
+  --text-muted: var(--gray-500);
+  --text-subtle: var(--gray-600);
+  --accent: var(--primary-700);
+  --accent-hover: var(--primary-800);
+  --accent-subtle: var(--primary-50);
+  --danger: var(--red-700);
+  --ok: var(--green-700);
 
-  --series-1: #0b5fff;
-  --series-2: #1f7a3d;
-  --series-3: #b45309;
-  --series-4: #7c3aed;
-  --series-5: #0e7490;
-  --series-6: #be185d;
+  /* 상호작용 채움색. 텍스트·테두리용 --accent 와 분리한다. 다크 모드에서
+   * --accent 는 어두운 배경 대비를 위해 밝아지지만, 버튼 배경은 Flowbite
+   * 규격대로 파란색 + 흰 글자를 유지해야 한다. */
+  --btn-bg: var(--primary-700);
+  --btn-bg-hover: var(--primary-800);
+  --btn-text: #ffffff;
 
-  --radius: 10px;
-  --gap: 16px;
+  /* 차트 시리즈 — Tailwind 600 계열 */
+  --series-1: #1c64f2;
+  --series-2: #057a55;
+  --series-3: #c27803;
+  --series-4: #7e3af2;
+  --series-5: #0694a2;
+  --series-6: #d61f69;
+
+  /* Flowbite 규격 */
+  --radius-sm: 0.375rem;
+  --radius: 0.5rem;
+  --radius-lg: 0.75rem;
+  --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.05);
+  --shadow: 0 1px 3px 0 rgb(0 0 0 / 0.1), 0 1px 2px -1px rgb(0 0 0 / 0.1);
+  --shadow-md: 0 4px 6px -1px rgb(0 0 0 / 0.1),
+               0 2px 4px -2px rgb(0 0 0 / 0.1);
+  --shadow-lg: 0 10px 15px -3px rgb(0 0 0 / 0.1),
+               0 4px 6px -4px rgb(0 0 0 / 0.1);
+  --gap: 1rem;
+  --content-max: 90rem;
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --bg: #14171c;
-    --surface: #1d2127;
-    --border: #333a44;
-    --text: #eef1f5;
-    --text-muted: #a8b0bd;
-    --accent: #7ba7ff;
-    --accent-strong: #a9c4ff;
-    --danger: #ff8a80;
-    --ok: #7ee2a0;
+    --bg: var(--gray-900);
+    --surface: var(--gray-800);
+    --surface-subtle: #1a2430;
+    --border: var(--gray-700);
+    --border-strong: var(--gray-600);
+    --text: var(--gray-50);
+    --text-muted: var(--gray-400);
+    --text-subtle: var(--gray-300);
+    --accent: #76a9fa;
+    --accent-hover: #a4cafe;
+    --accent-subtle: rgb(28 100 242 / 0.15);
+    --danger: #f98080;
+    --ok: #31c48d;
 
-    --series-1: #7ba7ff;
-    --series-2: #7ee2a0;
-    --series-3: #f0b357;
-    --series-4: #c4a2ff;
-    --series-5: #6fd6e8;
-    --series-6: #ff9dc4;
+    --btn-bg: var(--primary-600);
+    --btn-bg-hover: var(--primary-700);
+    --btn-text: #ffffff;
+
+    --green-100: rgb(4 108 78 / 0.25);
+    --green-700: #31c48d;
+    --red-100: rgb(200 30 30 / 0.25);
+    --red-700: #f98080;
+    --yellow-100: rgb(114 59 19 / 0.3);
+    --yellow-800: #e3a008;
+
+    --series-1: #76a9fa;
+    --series-2: #31c48d;
+    --series-3: #e3a008;
+    --series-4: #ac94fa;
+    --series-5: #16bdca;
+    --series-6: #f17eb8;
   }
 }
 
-* { box-sizing: border-box; }
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
 
 body {
   margin: 0;
-  padding: 0 24px 48px;
+  padding: 0;
   background: var(--bg);
   color: var(--text);
-  font: 15px/1.5 -apple-system, "Segoe UI", "Noto Sans KR", Roboto,
-        "Helvetica Neue", Arial, sans-serif;
+  font-family: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI",
+               "Noto Sans KR", Roboto, "Helvetica Neue", Arial, sans-serif;
+  font-size: 0.875rem;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
 }
 
 .skip-link {
@@ -69,478 +150,856 @@ body {
 }
 
 .skip-link:focus {
-  left: 8px;
-  top: 8px;
-  z-index: 10;
-  padding: 8px 12px;
+  left: 1rem;
+  top: 1rem;
+  z-index: 60;
+  padding: 0.625rem 1rem;
   background: var(--surface);
-  border: 2px solid var(--accent);
+  color: var(--accent);
+  border: 1px solid var(--accent);
   border-radius: var(--radius);
+  box-shadow: var(--shadow-md);
+  font-weight: 500;
 }
 
-/* 키보드 사용자에게 항상 보이는 포커스 링을 유지한다. */
+/* Flowbite 포커스 링: 2px 오프셋 + 3px ring */
 :focus-visible {
-  outline: 3px solid var(--accent);
+  outline: 2px solid transparent;
   outline-offset: 2px;
+  box-shadow: 0 0 0 3px var(--primary-200);
+  border-color: var(--accent);
 }
+
+@media (prefers-color-scheme: dark) {
+  :focus-visible {
+    box-shadow: 0 0 0 3px rgb(118 169 250 / 0.45);
+  }
+}
+
+/* ---------------------------------------------------------------------------
+ * 네비게이션 바
+ * ------------------------------------------------------------------------ */
 
 .topbar {
-  padding: 24px 0 8px;
+  position: sticky;
+  top: 0;
+  z-index: 40;
+  padding: 0.875rem 1.5rem;
+  background: var(--surface);
   border-bottom: 1px solid var(--border);
-  margin-bottom: 20px;
 }
 
 .brand {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 0.75rem;
+  max-width: var(--content-max);
+  margin: 0 auto;
 }
 
 .brand-mark {
-  color: var(--accent);
-  font-size: 22px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2rem;
+  height: 2rem;
+  flex: 0 0 auto;
+  border-radius: var(--radius);
+  background: var(--btn-bg);
+  color: var(--btn-text);
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
 }
 
 .topbar h1 {
   margin: 0;
-  font-size: 22px;
-  letter-spacing: -0.01em;
+  font-size: 1.125rem;
+  font-weight: 600;
+  letter-spacing: -0.011em;
+  color: var(--text);
 }
 
 .brand-sub {
-  margin: 4px 0 0 32px;
+  max-width: var(--content-max);
+  margin: 0.25rem auto 0;
+  padding-left: 2.75rem;
   color: var(--text-muted);
-  font-size: 13px;
+  font-size: 0.75rem;
 }
+
+/* ---------------------------------------------------------------------------
+ * 조회 조건 카드
+ * ------------------------------------------------------------------------ */
 
 .controls {
   display: flex;
   flex-wrap: wrap;
   gap: var(--gap);
   align-items: flex-end;
-  padding: 16px;
+  max-width: var(--content-max);
+  margin: 1.5rem auto 0;
+  padding: 1.25rem;
   background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: var(--radius);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
 }
 
 .field {
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  min-width: 150px;
+  gap: 0.375rem;
+  min-width: 10rem;
 }
 
 .field > label,
 .field > span {
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--text-muted);
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-}
-
-input, select, button {
-  font: inherit;
+  font-size: 0.875rem;
+  font-weight: 500;
   color: var(--text);
 }
 
-input[type="password"],
-input[type="date"],
-select {
-  padding: 8px 10px;
-  background: var(--bg);
-  border: 1px solid var(--border);
-  border-radius: 8px;
+.field input[type="password"],
+.field input[type="text"],
+.field input[type="date"],
+.field select {
+  width: 100%;
+  padding: 0.625rem 0.75rem;
+  background: var(--surface-subtle);
+  color: var(--text);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  font: inherit;
+  transition: border-color 0.15s, box-shadow 0.15s;
 }
 
-button {
-  padding: 8px 14px;
+.field input::placeholder {
+  color: var(--gray-400);
+}
+
+.field-quick,
+.field-actions {
+  min-width: auto;
+}
+
+.quick-buttons {
+  display: inline-flex;
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-sm);
+  overflow: hidden;
+}
+
+/* Flowbite button group: 인접 경계선을 겹쳐 1px 로 유지 */
+.quick-buttons button {
+  padding: 0.625rem 1rem;
   background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 8px;
+  color: var(--text-subtle);
+  border: 1px solid var(--border-strong);
+  border-right-width: 0;
+  font: inherit;
+  font-weight: 500;
   cursor: pointer;
+  transition: background 0.15s, color 0.15s;
 }
 
-button:hover { border-color: var(--accent); }
+.quick-buttons button:first-child {
+  border-radius: var(--radius) 0 0 var(--radius);
+}
 
-button.primary {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: #ffffff;
-  font-weight: 600;
+.quick-buttons button:last-child {
+  border-right-width: 1px;
+  border-radius: 0 var(--radius) var(--radius) 0;
+}
+
+.quick-buttons button:hover {
+  background: var(--gray-100);
+  color: var(--accent);
+}
+
+.quick-buttons button[aria-pressed="true"] {
+  background: var(--btn-bg);
+  border-color: var(--btn-bg);
+  color: var(--btn-text);
 }
 
 @media (prefers-color-scheme: dark) {
-  button.primary { color: #0b1220; }
+  .quick-buttons button:hover {
+    background: var(--gray-700);
+  }
 }
 
-button.primary:hover { background: var(--accent-strong); }
-
-.quick-buttons { display: flex; gap: 6px; }
-.quick-buttons button { padding: 8px 10px; }
-
 .field-actions {
-  gap: 8px;
-  min-width: 200px;
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 0.875rem;
+}
+
+/* ---------------------------------------------------------------------------
+ * 버튼
+ * ------------------------------------------------------------------------ */
+
+button {
+  font-family: inherit;
+}
+
+button.primary,
+.modal-actions button.primary {
+  padding: 0.625rem 1.25rem;
+  background: var(--btn-bg);
+  color: var(--btn-text);
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  font-size: 0.875rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+button.primary:hover {
+  background: var(--btn-bg-hover);
+}
+
+button.primary:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+/* 보조 버튼(라이트 버튼) */
+.row-actions button,
+.manage-toolbar button:not(.primary),
+.modal-actions button:not(.primary) {
+  padding: 0.5rem 0.75rem;
+  background: var(--surface);
+  color: var(--text-subtle);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  font-size: 0.8125rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+
+.row-actions button:hover,
+.manage-toolbar button:not(.primary):hover,
+.modal-actions button:not(.primary):hover {
+  background: var(--gray-100);
+  color: var(--accent);
+}
+
+@media (prefers-color-scheme: dark) {
+  .row-actions button:hover,
+  .manage-toolbar button:not(.primary):hover,
+  .modal-actions button:not(.primary):hover {
+    background: var(--gray-700);
+  }
 }
 
 .checkbox {
-  display: flex;
+  display: inline-flex;
   align-items: center;
-  gap: 6px;
-  font-size: 13px;
-  color: var(--text-muted);
-  text-transform: none;
-  letter-spacing: normal;
-  font-weight: 400;
+  gap: 0.5rem;
+  font-size: 0.875rem;
+  color: var(--text-subtle);
+  white-space: nowrap;
 }
+
+.checkbox input[type="checkbox"] {
+  width: 1rem;
+  height: 1rem;
+  accent-color: var(--btn-bg);
+  cursor: pointer;
+}
+
+/* ---------------------------------------------------------------------------
+ * 상태 알림 (Flowbite alert)
+ * ------------------------------------------------------------------------ */
 
 .status {
-  margin: 12px 0 0;
-  min-height: 20px;
-  font-size: 13px;
+  max-width: var(--content-max);
+  margin: 1rem auto 0;
+  padding: 0;
   color: var(--text-muted);
+  font-size: 0.8125rem;
+  min-height: 1.25rem;
 }
 
-.status[data-kind="error"] { color: var(--danger); font-weight: 600; }
-.status[data-kind="ok"] { color: var(--ok); }
+.status:not(:empty) {
+  padding: 0.75rem 1rem;
+  background: var(--accent-subtle);
+  color: var(--accent);
+  border: 1px solid var(--primary-200);
+  border-radius: var(--radius);
+  font-weight: 500;
+}
+
+@media (prefers-color-scheme: dark) {
+  .status:not(:empty) {
+    border-color: transparent;
+  }
+}
+
+/* ---------------------------------------------------------------------------
+ * 화면 전환 (Flowbite underline tabs)
+ * ------------------------------------------------------------------------ */
+
+.view-switch {
+  display: flex;
+  gap: 0.25rem;
+  max-width: var(--content-max);
+  margin: 1.5rem auto 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.view-tab {
+  padding: 0.75rem 1.25rem;
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  color: var(--text-muted);
+  font-size: 0.875rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s;
+}
+
+.view-tab:hover {
+  color: var(--text);
+  border-bottom-color: var(--border-strong);
+}
+
+.view-tab[aria-pressed="true"] {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+}
+
+/* ---------------------------------------------------------------------------
+ * 본문 레이아웃
+ * ------------------------------------------------------------------------ */
+
+main {
+  display: block;
+  max-width: var(--content-max);
+  margin: 0 auto;
+  padding: 0 1.5rem 3rem;
+}
+
+main > div > section {
+  margin-top: 2rem;
+}
 
 .section-heading {
-  margin: 28px 0 12px;
-  font-size: 15px;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: var(--text-muted);
+  margin: 0 0 0.875rem;
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--text);
+  letter-spacing: -0.006em;
 }
+
+/* ---------------------------------------------------------------------------
+ * KPI 카드
+ * ------------------------------------------------------------------------ */
 
 .kpi-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr));
   gap: var(--gap);
 }
 
-.kpi, .card {
-  padding: 16px;
+.kpi {
+  padding: 1.25rem;
   background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: var(--radius);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
 }
 
-.kpi h3, .card h3 {
-  margin: 0 0 8px;
-  font-size: 13px
-;
+.kpi h3 {
+  margin: 0;
+  font-size: 0.8125rem;
+  font-weight: 500;
   color: var(--text-muted);
-  font-weight: 600;
 }
 
 .kpi-value {
-  margin: 0;
-  font-size: 26px;
+  margin: 0.5rem 0 0;
+  font-size: 1.75rem;
   font-weight: 700;
-  font-variant-numeric: tabular-nums;
+  line-height: 1.2;
   letter-spacing: -0.02em;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
 }
 
 .kpi-note {
-  margin: 4px 0 0;
-  font-size: 12px;
+  margin: 0.375rem 0 0;
+  font-size: 0.75rem;
   color: var(--text-muted);
+  min-height: 1rem;
 }
 
-/* 단가 미등록 모델이 섞여 비용 합계가 불완전할 때 강조한다. */
-.kpi-note[data-warn="true"] {
-  color: var(--danger);
-  font-weight: 600;
-}
+/* ---------------------------------------------------------------------------
+ * 차트 카드
+ * ------------------------------------------------------------------------ */
 
 .chart-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(20rem, 1fr));
   gap: var(--gap);
 }
 
-.card-wide { grid-column: 1 / -1; }
+.card {
+  padding: 1.25rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
+  min-width: 0;
+}
+
+.card h3 {
+  margin: 0 0 1rem;
+  font-size: 0.9375rem;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.card-wide {
+  grid-column: 1 / -1;
+}
 
 .chart {
   width: 100%;
-  min-height: 220px;
+  min-height: 13rem;
 }
 
-.chart svg { display: block; width: 100%; height: auto; }
+/* 조회 전에는 차트 컨테이너가 비어 있다. 아무 표시가 없으면 큰 빈 박스만
+ * 남아 고장으로 보이므로 플레이스홀더를 둔다. 렌더링되면 JS 가 내용을
+ * 채우므로 이 규칙은 자동으로 해제된다. */
+.chart:empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 11rem;
+  background: var(--surface-subtle);
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius);
+}
+
+.chart:empty::after {
+  content: "조회하면 차트가 표시된다";
+  color: var(--text-muted);
+  font-size: 0.8125rem;
+}
+
+.chart svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  overflow: visible;
+}
 
 .chart-empty {
   display: flex;
   align-items: center;
   justify-content: center;
-  min-height: 200px;
+  min-height: 11rem;
+  padding: 1rem;
   color: var(--text-muted);
-  font-size: 13px;
+  font-size: 0.8125rem;
+  text-align: center;
+  background: var(--surface-subtle);
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius);
 }
+
+/* ---------------------------------------------------------------------------
+ * 탭 (Flowbite pill tabs)
+ * ------------------------------------------------------------------------ */
 
 .tabs {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
-  margin-bottom: 10px;
+  gap: 0.375rem;
+  margin-bottom: 1rem;
+}
+
+.tabs button {
+  padding: 0.5rem 1rem;
+  background: transparent;
+  color: var(--text-muted);
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  font-size: 0.8125rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+
+.tabs button:hover {
+  background: var(--gray-100);
+  color: var(--text);
 }
 
 .tabs button[aria-selected="true"] {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: #ffffff;
-  font-weight: 600;
+  background: var(--btn-bg);
+  color: var(--btn-text);
 }
 
 @media (prefers-color-scheme: dark) {
-  .tabs button[aria-selected="true"] { color: #0b1220; }
+  .tabs button:hover {
+    background: var(--gray-700);
+  }
 }
+
+/* ---------------------------------------------------------------------------
+ * 표 (Flowbite table)
+ * ------------------------------------------------------------------------ */
 
 .table-wrap {
   overflow-x: auto;
   background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: var(--radius);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
 }
 
 table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 14px;
+  font-size: 0.875rem;
 }
 
 caption {
-  padding: 12px 16px;
-  text-align: left;
-  font-size: 13px;
-  font-weight: 600;
+  padding: 1rem 1.25rem 0.75rem;
   color: var(--text-muted);
+  font-size: 0.8125rem;
+  text-align: left;
 }
 
-th, td {
-  padding: 10px 16px;
-  text-align: left;
-  border-top: 1px solid var(--border);
-  white-space: nowrap;
+thead {
+  background: var(--surface-subtle);
 }
 
 th {
-  font-size: 12px;
+  padding: 0.75rem 1rem;
+  color: var(--text-subtle);
+  font-size: 0.75rem;
+  font-weight: 600;
   text-transform: uppercase;
-  letter-spacing: 0.04em;
-  color: var(--text-muted);
+  letter-spacing: 0.03em;
+  text-align: left;
+  white-space: nowrap;
+  border-bottom: 1px solid var(--border);
 }
 
-td.numeric, th.numeric {
+td {
+  padding: 0.75rem 1rem;
+  border-bottom: 1px solid var(--border);
+  color: var(--text);
+  vertical-align: middle;
+}
+
+tbody tr:last-child td {
+  border-bottom: none;
+}
+
+tbody tr:hover {
+  background: var(--surface-subtle);
+}
+
+.numeric,
+th.numeric,
+td.numeric {
   text-align: right;
   font-variant-numeric: tabular-nums;
 }
 
-tbody tr:hover { background: color-mix(in srgb, var(--accent) 8%, transparent); }
-
-.badge {
-  display: inline-block;
-  padding: 2px 8px;
-  border-radius: 999px;
-  font-size: 12px;
-  font-weight: 600;
-}
-
-.badge-ok { background: color-mix(in srgb, var(--ok) 18%, transparent); color: var(--ok); }
-.badge-error { background: color-mix(in srgb, var(--danger) 18%, transparent); color: var(--danger); }
-
 .empty-row td {
+  padding: 2.5rem 1rem;
   color: var(--text-muted);
   text-align: center;
-  padding: 28px 16px;
 }
 
-.footer {
-  margin-top: 32px;
-  padding-top: 16px;
-  border-top: 1px solid var(--border);
-  color: var(--text-muted);
-  font-size: 12px;
-  max-width: 900px;
+/* ---------------------------------------------------------------------------
+ * 배지 (Flowbite badge)
+ * ------------------------------------------------------------------------ */
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.125rem 0.625rem;
+  border-radius: var(--radius-sm);
+  font-size: 0.75rem;
+  font-weight: 500;
+  white-space: nowrap;
+  background: var(--gray-100);
+  color: var(--text-subtle);
 }
 
-.footer code {
-  padding: 1px 5px;
-  background: var(--bg);
-  border: 1px solid var(--border);
-  border-radius: 4px;
+.badge-ok {
+  background: var(--green-100);
+  color: var(--green-700);
 }
 
-/* -- 화면 전환 (모니터링 / 관리) ---------------------------------------- */
-
-.view-switch {
-  display: flex;
-  gap: 8px;
-  margin: 16px 0 0;
-}
-
-.view-tab {
-  padding: 8px 18px;
-  font-weight: 600;
-}
-
-.view-tab[aria-pressed="true"] {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: #ffffff;
+.badge-error {
+  background: var(--red-100);
+  color: var(--red-700);
 }
 
 @media (prefers-color-scheme: dark) {
-  .view-tab[aria-pressed="true"] { color: #0b1220; }
+  .badge {
+    background: var(--gray-700);
+    color: var(--gray-300);
+  }
 }
 
-/* -- 관리 화면 ----------------------------------------------------------- */
+/* ---------------------------------------------------------------------------
+ * 관리 화면
+ * ------------------------------------------------------------------------ */
 
-.manage-hint,
-.manage-error {
-  font-size: 13px;
-  color: var(--text-muted);
-  margin: 0 0 12px;
+.manage-hint {
+  margin: 0 0 1rem;
+  padding: 0.875rem 1rem;
+  background: var(--surface-subtle);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent);
+  border-radius: var(--radius);
+  color: var(--text-subtle);
+  font-size: 0.8125rem;
 }
 
-.manage-error { color: var(--danger); font-weight: 600; }
-
-.manage-panel { margin-top: 12px; }
+.manage-panel {
+  min-height: 8rem;
+}
 
 .manage-toolbar {
   display: flex;
-  justify-content: flex-end;
-  margin-bottom: 12px;
+  flex-wrap: wrap;
+  gap: 0.625rem;
+  align-items: center;
+  margin-bottom: 1rem;
+}
+
+.manage-error {
+  margin: 0 0 1rem;
+  padding: 0.875rem 1rem;
+  background: var(--red-100);
+  color: var(--red-700);
+  border-radius: var(--radius);
+  font-size: 0.8125rem;
+  font-weight: 500;
 }
 
 .row-actions {
   display: flex;
-  gap: 6px;
   flex-wrap: wrap;
+  gap: 0.375rem;
 }
 
-.row-actions button {
-  padding: 5px 10px;
-  font-size: 13px;
-}
-
-button.danger {
-  border-color: var(--danger);
-  color: var(--danger);
-}
-
-button.danger:hover {
-  background: var(--danger);
-  color: #ffffff;
-}
-
-@media (prefers-color-scheme: dark) {
-  button.danger:hover { color: #0b1220; }
-}
-
-/* 상태 배지는 대시보드 표와 같은 스타일을 재사용하되, 관리 표에서 활성/
-   비활성 색 대비를 확실히 한다. */
-.badge {
-  display: inline-block;
-  padding: 2px 8px;
-  border-radius: 999px;
-  font-size: 12px;
-  font-weight: 600;
-}
-
-.badge-ok { background: color-mix(in srgb, var(--ok) 18%, transparent); color: var(--ok); }
-.badge-error { background: color-mix(in srgb, var(--danger) 18%, transparent); color: var(--danger); }
-
-/* -- 모달 ---------------------------------------------------------------- */
+/* ---------------------------------------------------------------------------
+ * 모달 (Flowbite modal)
+ * ------------------------------------------------------------------------ */
 
 .modal-root {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.45);
+  z-index: 50;
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 24px;
-  z-index: 100;
+  padding: 1rem;
+  background: rgb(17 25 40 / 0.55);
+  overflow-y: auto;
 }
 
+/* HTML hidden 속성이 display:flex 보다 우선해야 한다. 이 규칙이 없으면
+ * 숨겨진 모달이 화면 전체를 덮어 클릭을 가로챈다. */
 .modal-root[hidden] {
   display: none;
 }
 
 .modal {
+  width: 100%;
+  max-width: 32rem;
+  max-height: calc(100vh - 2rem);
+  overflow-y: auto;
+  padding: 1.5rem;
   background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 24px;
-  width: 100%;
-  max-width: 460px;
-  max-height: 90vh;
-  overflow-y: auto;
-  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.3);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
 }
 
 .modal h3 {
-  margin: 0 0 16px;
-  font-size: 18px;
+  margin: 0 0 1.25rem;
+  font-size: 1.125rem;
+  font-weight: 600;
+  color: var(--text);
 }
 
 .modal-field {
-  margin-bottom: 14px;
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 0.375rem;
+  margin-bottom: 1rem;
 }
 
 .modal-field label {
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--text-muted);
-}
-
-.modal-field input {
-  padding: 8px 10px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--bg);
+  font-size: 0.875rem;
+  font-weight: 500;
   color: var(--text);
-  font-size: 14px;
 }
 
-.modal-field input.readonly {
-  color: var(--text-muted);
-  cursor: not-allowed;
+.modal-field input,
+.modal-field select,
+.modal-field textarea {
+  width: 100%;
+  padding: 0.625rem 0.75rem;
+  background: var(--surface-subtle);
+  color: var(--text);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  font: inherit;
+}
+
+.modal-field input.readonly,
+.modal-field input[readonly] {
+  background: var(--gray-100);
+  color: var(--text-subtle);
+}
+
+@media (prefers-color-scheme: dark) {
+  .modal-field input.readonly,
+  .modal-field input[readonly] {
+    background: var(--gray-900);
+  }
 }
 
 .modal-hint {
-  margin: 0;
-  font-size: 12px;
+  margin: 0 0 1rem;
   color: var(--text-muted);
+  font-size: 0.75rem;
 }
 
 .modal-error {
-  margin: 4px 0 12px;
-  min-height: 18px;
-  font-size: 13px;
-  color: var(--danger);
-  font-weight: 600;
+  margin: 0 0 1rem;
+  padding: 0.75rem 1rem;
+  background: var(--red-100);
+  color: var(--red-700);
+  border-radius: var(--radius);
+  font-size: 0.8125rem;
+  font-weight: 500;
 }
 
 .modal-actions {
   display: flex;
   justify-content: flex-end;
-  gap: 8px;
-  margin-top: 8px;
+  gap: 0.625rem;
+  margin-top: 1.5rem;
 }
 
 .key-plaintext {
-  background: var(--bg);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 12px;
-  font-size: 13px;
+  display: block;
+  width: 100%;
+  padding: 0.75rem;
+  background: var(--gray-900);
+  color: var(--green-700);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  font-size: 0.8125rem;
   word-break: break-all;
-  white-space: pre-wrap;
-  margin: 0 0 16px;
+}
+
+@media (prefers-color-scheme: dark) {
+  .key-plaintext {
+    background: #0b1220;
+  }
+}
+
+/* ---------------------------------------------------------------------------
+ * 푸터
+ * ------------------------------------------------------------------------ */
+
+.footer {
+  max-width: var(--content-max);
+  margin: 0 auto;
+  padding: 1.5rem;
+  border-top: 1px solid var(--border);
+}
+
+.footer p {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 0.75rem;
+}
+
+code {
+  padding: 0.125rem 0.375rem;
+  background: var(--gray-100);
+  border-radius: var(--radius-sm);
+  font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  font-size: 0.8125rem;
+  color: var(--text-subtle);
+}
+
+@media (prefers-color-scheme: dark) {
+  code {
+    background: var(--gray-900);
+  }
+}
+
+/* ---------------------------------------------------------------------------
+ * 모바일
+ * ------------------------------------------------------------------------ */
+
+@media (max-width: 640px) {
+  .topbar {
+    padding: 0.875rem 1rem;
+  }
+
+  .controls {
+    margin: 1rem auto 0;
+    padding: 1rem;
+    border-radius: var(--radius);
+  }
+
+  .field {
+    min-width: 100%;
+  }
+
+  .quick-buttons,
+  .field-actions {
+    width: 100%;
+  }
+
+  .quick-buttons button {
+    flex: 1 1 0;
+  }
+
+  main {
+    padding: 0 1rem 2rem;
+  }
+
+  .status,
+  .view-switch {
+    padding-left: 1rem;
+    padding-right: 1rem;
+  }
+
+  .view-tab {
+    flex: 1 1 0;
+    padding: 0.75rem 0.5rem;
+  }
+
+  .kpi-value {
+    font-size: 1.5rem;
+  }
+
+  .footer {
+    padding: 1.5rem 1rem;
+  }
 }
