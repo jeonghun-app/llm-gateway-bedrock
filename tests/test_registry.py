@@ -590,3 +590,102 @@ def test_api_key_평문은저장되지않는다(
     assert (
         generated.plaintext not in serialized
     ), "평문 키가 저장소에 남아 있으면 안 된다"
+
+
+# ---------------------------------------------------------------------------
+# 직렬화 왕복 — 필드 유실 재발 방지
+#
+# 저장 경로가 세 곳(put/update/rotate)이라 직렬화를 각자 나열하던 때
+# 필드가 유실되는 일이 두 번 있었다. 1.7.0 에서 update 가 rpm_limit 과
+# expires_at 을 저장하지 않았고, 그것을 고친 뒤에도 rotate 는 그대로 남아
+# 키를 회전하면 두 값이 사라졌다. 만료된 키를 회전하면 무기한 유효해지는
+# 통제 우회였다.
+#
+# 아래 테스트는 특정 필드 이름을 나열하지 않는다. 도메인 모델에 새 필드가
+# 생기면 자동으로 검사 대상이 되어야 재발을 막을 수 있다.
+# ---------------------------------------------------------------------------
+
+
+def _모든필드를채운키(key_hash: str = "hash-full") -> domain.ApiKey:
+    """선택 필드까지 모두 채운 API 키를 만든다."""
+    return domain.ApiKey(
+        key_id="key-full",
+        key_hash=key_hash,
+        key_prefix="sk-llmgw-dev-abcd",
+        account_id="acme",
+        team_id="platform",
+        user_id="alice",
+        name="전 필드 키",
+        allowed_models=("amazon.nova-lite-v1:0", "amazon.nova-pro-v1:0"),
+        monthly_budget_usd=decimal.Decimal("123.45"),
+        rpm_limit=30,
+        expires_at="2027-01-01T00:00:00Z",
+        last_used_at="2026-08-30T00:00:00Z",
+    )
+
+
+def test_키생성후모든필드가그대로조회된다(
+    registry: repository.RegistryRepository,
+) -> None:
+    key = _모든필드를채운키()
+    registry.put_api_key(key)
+    assert registry.get_api_key_by_hash(key.key_hash) == key
+
+
+def test_키수정후모든필드가그대로조회된다(
+    registry: repository.RegistryRepository,
+) -> None:
+    key = _모든필드를채운키()
+    registry.put_api_key(key)
+    # model_copy(update=...) 는 검증을 건너뛴다. Decimal 을 직접 넣어야 한다.
+    # float 을 넣으면 DynamoDB 직렬화에서 TypeError 가 난다.
+    changed = key.model_copy(
+        update={
+            "name": "이름 변경",
+            "rpm_limit": 60,
+            "monthly_budget_usd": decimal.Decimal("7.5"),
+        }
+    )
+    registry.update_api_key(changed)
+    assert registry.get_api_key_by_hash(key.key_hash) == changed
+
+
+def test_키회전후해시외모든필드가보존된다(
+    registry: repository.RegistryRepository,
+) -> None:
+    # 회전이 rpm_limit 과 expires_at 을 지우던 버그의 회귀 테스트다.
+    key = _모든필드를채운키(key_hash="hash-before")
+    registry.put_api_key(key)
+    rotated = key.model_copy(
+        update={"key_hash": "hash-after", "key_prefix": "sk-llmgw-dev-wxyz"}
+    )
+    registry.rotate_api_key(old_key_hash=key.key_hash, rotated=rotated)
+
+    stored = registry.get_api_key_by_hash("hash-after")
+    assert stored == rotated
+    # 옛 해시는 무효가 되어야 한다.
+    assert registry.get_api_key_by_hash("hash-before") is None
+
+
+def test_세저장경로가같은아이템을만든다(
+    registry: repository.RegistryRepository,
+) -> None:
+    # 필드 이름을 나열하지 않고 세 경로의 결과가 같은지 본다. 도메인에 새
+    # 필드가 생겨도 자동으로 검사된다.
+    key = _모든필드를채운키(key_hash="hash-a")
+    registry.put_api_key(key)
+    created = registry.get_api_key_by_hash("hash-a")
+
+    registry.update_api_key(key)
+    updated = registry.get_api_key_by_hash("hash-a")
+
+    rotated_key = key.model_copy(update={"key_hash": "hash-b"})
+    registry.rotate_api_key(old_key_hash="hash-a", rotated=rotated_key)
+    rotated = registry.get_api_key_by_hash("hash-b")
+
+    assert created is not None and updated is not None and rotated is not None
+    # 해시만 다르고 나머지는 같아야 한다.
+    assert created.model_dump() == updated.model_dump()
+    assert rotated.model_dump(exclude={"key_hash"}) == created.model_dump(
+        exclude={"key_hash"}
+    )

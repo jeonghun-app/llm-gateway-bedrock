@@ -311,6 +311,47 @@ def _strip_none(item: _JsonDict) -> _JsonDict:
     return {name: value for name, value in item.items() if value is not None}
 
 
+def _api_key_item(api_key: domain.ApiKey) -> dict[str, typing.Any]:
+    """API 키를 DynamoDB 아이템으로 직렬화한다.
+
+    저장 경로가 세 곳(`put_api_key`, `update_api_key`, `rotate_api_key`)이라
+    직렬화를 각자 나열하면 필드를 추가할 때 일부만 갱신된다. 실제로 그런 일이
+    두 번 있었다. 1.7.0 에서 `update_api_key` 가 `rpm_limit` 과 `expires_at` 을
+    저장하지 않았고, 그것을 고친 뒤에도 `rotate_api_key` 는 그대로 남아 키를
+    회전하면 레이트리밋과 만료가 사라졌다. 만료된 키를 회전하면 무기한
+    유효해지는 통제 우회였다.
+
+    Args:
+        api_key: 직렬화할 키.
+
+    Returns:
+        `None` 필드가 제거된 아이템.
+    """
+    return _strip_none(
+        {
+            "pk": key_pk(api_key.key_hash),
+            "sk": _META_SORT_KEY,
+            "gsi1pk": account_pk(api_key.account_id),
+            "gsi1sk": f"KEY#{api_key.key_id}",
+            "entity": "api_key",
+            "key_id": api_key.key_id,
+            "key_hash": api_key.key_hash,
+            "key_prefix": api_key.key_prefix,
+            "account_id": api_key.account_id,
+            "team_id": api_key.team_id,
+            "user_id": api_key.user_id,
+            "display_name": api_key.name,
+            "allowed_models": list(api_key.allowed_models),
+            "monthly_budget_usd": api_key.monthly_budget_usd,
+            "rpm_limit": api_key.rpm_limit,
+            "expires_at": api_key.expires_at,
+            "status": api_key.status.value,
+            "created_at": api_key.created_at,
+            "last_used_at": api_key.last_used_at,
+        }
+    )
+
+
 def _totals_from_item(item: _JsonDict) -> domain.UsageTotals:
     """집계 테이블 아이템을 `UsageTotals` 로 변환한다."""
     return domain.UsageTotals(
@@ -735,30 +776,7 @@ class RegistryRepository:
                 충돌은 사실상 발생하지 않지만, 조건부 쓰기를 생략하면 기존
                 키를 조용히 덮어쓸 수 있어 방어한다.
         """
-        item = _strip_none(
-            {
-                "pk": key_pk(api_key.key_hash),
-                "sk": _META_SORT_KEY,
-                "gsi1pk": account_pk(api_key.account_id),
-                "gsi1sk": f"KEY#{api_key.key_id}",
-                "entity": "api_key",
-                "key_id": api_key.key_id,
-                "key_hash": api_key.key_hash,
-                "key_prefix": api_key.key_prefix,
-                "account_id": api_key.account_id,
-                "team_id": api_key.team_id,
-                "user_id": api_key.user_id,
-                "display_name": api_key.name,
-                "allowed_models": list(api_key.allowed_models),
-                "monthly_budget_usd": api_key.monthly_budget_usd,
-                "rpm_limit": api_key.rpm_limit,
-                "expires_at": api_key.expires_at,
-                "status": api_key.status.value,
-                "created_at": api_key.created_at,
-                "last_used_at": api_key.last_used_at,
-            }
-        )
-        self._put(item, overwrite=False, label="api_key")
+        self._put(_api_key_item(api_key), overwrite=False, label="api_key")
 
     def get_api_key_by_hash(self, key_hash: str) -> domain.ApiKey | None:
         """해시로 API 키를 조회한다.
@@ -820,32 +838,10 @@ class RegistryRepository:
         Raises:
             ResourceNotFoundError: 해당 해시의 키가 없는 경우.
         """
-        item = _strip_none(
-            {
-                "pk": key_pk(api_key.key_hash),
-                "sk": _META_SORT_KEY,
-                "gsi1pk": account_pk(api_key.account_id),
-                "gsi1sk": f"KEY#{api_key.key_id}",
-                "entity": "api_key",
-                "key_id": api_key.key_id,
-                "key_hash": api_key.key_hash,
-                "key_prefix": api_key.key_prefix,
-                "account_id": api_key.account_id,
-                "team_id": api_key.team_id,
-                "user_id": api_key.user_id,
-                "display_name": api_key.name,
-                "allowed_models": list(api_key.allowed_models),
-                "monthly_budget_usd": api_key.monthly_budget_usd,
-                "rpm_limit": api_key.rpm_limit,
-                "expires_at": api_key.expires_at,
-                "status": api_key.status.value,
-                "created_at": api_key.created_at,
-                "last_used_at": api_key.last_used_at,
-            }
-        )
         try:
             self._table.put_item(
-                Item=item, ConditionExpression="attribute_exists(pk)"
+                Item=_api_key_item(api_key),
+                ConditionExpression="attribute_exists(pk)",
             )
         except botocore.exceptions.ClientError as exc:
             code = exc.response.get("Error", {}).get("Code")
@@ -924,27 +920,7 @@ class RegistryRepository:
             raise errors.GatewayError(
                 "재발급에는 트랜잭션 클라이언트가 필요하다."
             )
-        new_item = _strip_none(
-            {
-                "pk": key_pk(rotated.key_hash),
-                "sk": _META_SORT_KEY,
-                "gsi1pk": account_pk(rotated.account_id),
-                "gsi1sk": f"KEY#{rotated.key_id}",
-                "entity": "api_key",
-                "key_id": rotated.key_id,
-                "key_hash": rotated.key_hash,
-                "key_prefix": rotated.key_prefix,
-                "account_id": rotated.account_id,
-                "team_id": rotated.team_id,
-                "user_id": rotated.user_id,
-                "display_name": rotated.name,
-                "allowed_models": list(rotated.allowed_models),
-                "monthly_budget_usd": rotated.monthly_budget_usd,
-                "status": rotated.status.value,
-                "created_at": rotated.created_at,
-                "last_used_at": rotated.last_used_at,
-            }
-        )
+        new_item = _api_key_item(rotated)
         transact_items = [
             {
                 "Put": {

@@ -90,13 +90,27 @@ aws ecr describe-images --region $REGION --repository-name llmgw-dev \
   --output table
 
 # 특정 태그로 스택 재배포
+#
+# --s3-bucket 이 필요하다. 템플릿이 CloudFormation 의 인라인 한도(51,200 바이트)
+# 를 넘어 v1.13.1 부터 S3 를 경유한다. 이 옵션 없이 실행하면 크기 초과로
+# 실패한다. 버킷은 deploy.sh 가 이미 만들어 둔 것을 쓴다.
 ACCOUNT_ID="$(aws sts get-caller-identity --query Account --output text)"
+TEMPLATE_BUCKET="llmgw-dev-cfn-${ACCOUNT_ID}-${REGION}"
 aws cloudformation deploy --region $REGION --stack-name $STACK \
   --template-file infra/app.yaml --capabilities CAPABILITY_NAMED_IAM \
+  --s3-bucket "$TEMPLATE_BUCKET" --s3-prefix "$STACK" \
   --no-fail-on-empty-changeset \
   --parameter-overrides \
     "ImageUri=${ACCOUNT_ID}.dkr.ecr.${REGION}.amazonaws.com/llmgw-dev:<되돌릴태그>" \
     "EcrRepositoryArn=arn:aws:ecr:${REGION}:${ACCOUNT_ID}:repository/llmgw-dev"
+```
+
+공개 GHCR 이미지로 배포했다면 `--image` 를 쓰는 편이 간단하다. `deploy.sh` 가
+버킷과 파라미터를 알아서 처리한다.
+
+```bash
+./scripts/deploy.sh --allowed-cidr <IP>/32 \
+  --image ghcr.io/jeonghun-app/llm-gateway-bedrock:<되돌릴버전>
 ```
 
 `deploy.sh` 로 배포했던 나머지 파라미터는 CloudFormation 이 이전 값을 유지한다.
