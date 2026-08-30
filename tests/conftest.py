@@ -40,6 +40,7 @@ from llmgw import clock  # noqa: E402
 from llmgw import config  # noqa: E402
 from llmgw import domain  # noqa: E402
 from llmgw import errors  # noqa: E402
+from llmgw import guardrails as guardrails_module
 from llmgw import observability  # noqa: E402
 from llmgw import oidc  # noqa: E402
 from llmgw import pricing  # noqa: E402
@@ -434,9 +435,22 @@ class FakeBedrock:
     def __init__(self) -> None:
         """대역을 만든다."""
         self.last_call: dict[str, typing.Any] | None = None
+        # verify_guardrail 이 거부할 ID 목록. 설정 시 검증 실패를 재현한다.
+        self.unknown_guardrails: set[str] = set()
+        # 개입을 재현할 때 바꾼다. 기본은 정상 종료다.
+        self.stop_reason = "end_turn"
+        self.verified_guardrails: list[tuple[str, str]] = []
         self.raise_on_converse: Exception | None = None
         self.raise_on_stream: Exception | None = None
         self.model_ids: tuple[str, ...] = FAKE_MODEL_IDS
+
+    def verify_guardrail(self, guardrail_id: str, version: str) -> None:
+        """가드레일 검증 대역."""
+        self.verified_guardrails.append((guardrail_id, version))
+        if guardrail_id in self.unknown_guardrails:
+            raise errors.ResourceNotFoundError(
+                f"가드레일을 찾을 수 없다: {guardrail_id}"
+            )
 
     def list_model_ids(self) -> tuple[str, ...]:
         """고정된 모델 목록을 반환한다."""
@@ -449,7 +463,7 @@ class FakeBedrock:
             raise self.raise_on_converse
         return bedrock.ConverseResult(
             text=FAKE_RESPONSE_TEXT,
-            stop_reason="end_turn",
+            stop_reason=self.stop_reason,
             input_tokens=FAKE_INPUT_TOKENS,
             output_tokens=FAKE_OUTPUT_TOKENS,
         )
@@ -463,7 +477,7 @@ class FakeBedrock:
             raise self.raise_on_stream
         for character in FAKE_RESPONSE_TEXT:
             yield bedrock.StreamDelta(text=character)
-        yield bedrock.StreamDelta(stop_reason="end_turn")
+        yield bedrock.StreamDelta(stop_reason=self.stop_reason)
         yield bedrock.StreamDelta(
             input_tokens=FAKE_INPUT_TOKENS,
             output_tokens=FAKE_OUTPUT_TOKENS,
@@ -586,6 +600,7 @@ def app_services(
     frozen_clock: FrozenClock,
     oidc_verifier: oidc.OidcVerifier,
     request_filter_chain: extensions_runtime.RequestFilterChain,
+    guardrail_resolver: guardrails_module.GuardrailResolver,
 ) -> services.Services:
     """실제 서비스 컨테이너를 조립한다. Bedrock 과 시계만 대역이다."""
     return services.Services(
@@ -603,6 +618,21 @@ def app_services(
         id_factory=SequenceIdFactory("req"),
         oidc=oidc_verifier,
         request_filters=request_filter_chain,
+        guardrails=guardrail_resolver,
+    )
+
+
+@pytest.fixture
+def guardrail_resolver(
+    registry: repository.RegistryRepository,
+    logger: observability.Logger,
+) -> guardrails_module.GuardrailResolver:
+    """가드레일 해석기. 캐시를 끄고 저장소를 매번 읽는다.
+
+    테스트가 설정을 바꾼 직후 결과를 보려면 캐시가 방해된다.
+    """
+    return guardrails_module.GuardrailResolver(
+        registry=registry, logger=logger, cache_ttl_seconds=0.0
     )
 
 

@@ -22,6 +22,7 @@ from llmgw import clock as clock_module
 from llmgw import config
 from llmgw import domain
 from llmgw import errors
+from llmgw import guardrails as guardrails_module
 from llmgw import observability
 from llmgw import oidc as oidc_module
 from llmgw import pricing as pricing_module
@@ -55,6 +56,7 @@ class Services:
         id_factory: 식별자 생성기.
         oidc: 외부 인증 토큰 검증기.
         request_filters: 요청 필터 확장 체인. 활성 확장이 없으면 빈 체인이다.
+        guardrails: 가드레일 정책 해석기.
     """
 
     settings: config.Settings
@@ -71,6 +73,7 @@ class Services:
     id_factory: clock_module.IdFactory
     oidc: oidc_module.OidcVerifier
     request_filters: extensions_runtime.RequestFilterChain
+    guardrails: guardrails_module.GuardrailResolver
 
 
 def build_services(settings: config.Settings) -> Services:
@@ -189,6 +192,9 @@ def build_services(settings: config.Settings) -> Services:
         id_factory=clock_module.UUID_ID_FACTORY,
         oidc=oidc_verifier,
         request_filters=request_filters,
+        guardrails=guardrails_module.GuardrailResolver(
+            registry=registry, logger=logger
+        ),
     )
 
 

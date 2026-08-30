@@ -324,6 +324,46 @@ class UpdateApiKeyRequest(_AdminBase):
     expires_at: str | None = pydantic.Field(default=None, max_length=40)
 
 
+class PutGuardrailConfigRequest(pydantic.BaseModel):
+    """`PUT /admin/accounts/{id}/guardrail` 요청 본문.
+
+    Attributes:
+        guardrail_id: AWS 가드레일 식별자 또는 ARN.
+        guardrail_version: 가드레일 버전. **숫자만 받는다.** `DRAFT` 는 내용이
+            예고 없이 바뀌어 통제로 쓸 수 없다. 실측 결과 `DRAFT` 도 런타임에서
+            동작하므로 여기서 막지 않으면 조용히 변하는 정책을 강제하게 된다.
+        enabled: 기준선 적용 여부.
+    """
+
+    model_config = pydantic.ConfigDict(extra="forbid")
+
+    guardrail_id: str = pydantic.Field(min_length=1, max_length=2048)
+    guardrail_version: str = pydantic.Field(pattern=r"^[0-9]{1,8}$")
+    enabled: bool = True
+
+
+class PutGuardrailExemptionRequest(pydantic.BaseModel):
+    """가드레일 면제 요청 본문.
+
+    Attributes:
+        exempt: 면제 여부.
+        reason: 면제 사유. 면제할 때 필수다. 왜 통제를 껐는지 남지 않으면
+            나중에 검토할 수 없다.
+    """
+
+    model_config = pydantic.ConfigDict(extra="forbid")
+
+    exempt: bool
+    reason: str = pydantic.Field(default="", max_length=512)
+
+    @pydantic.model_validator(mode="after")
+    def _require_reason(self) -> PutGuardrailExemptionRequest:
+        """면제할 때 사유를 요구한다."""
+        if self.exempt and not self.reason.strip():
+            raise ValueError("면제하려면 reason 이 필요하다")
+        return self
+
+
 class PutAuthConfigRequest(_AdminBase):
     """계정 외부 인증(OIDC) 설정 요청.
 

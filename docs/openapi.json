@@ -475,6 +475,55 @@
         "title": "PutAuthConfigRequest",
         "type": "object"
       },
+      "PutGuardrailConfigRequest": {
+        "additionalProperties": false,
+        "description": "`PUT /admin/accounts/{id}/guardrail` 요청 본문.\n\nAttributes:\n    guardrail_id: AWS 가드레일 식별자 또는 ARN.\n    guardrail_version: 가드레일 버전. **숫자만 받는다.** `DRAFT` 는 내용이\n        예고 없이 바뀌어 통제로 쓸 수 없다. 실측 결과 `DRAFT` 도 런타임에서\n        동작하므로 여기서 막지 않으면 조용히 변하는 정책을 강제하게 된다.\n    enabled: 기준선 적용 여부.",
+        "properties": {
+          "enabled": {
+            "default": true,
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "guardrail_id": {
+            "maxLength": 2048,
+            "minLength": 1,
+            "title": "Guardrail Id",
+            "type": "string"
+          },
+          "guardrail_version": {
+            "pattern": "^[0-9]{1,8}$",
+            "title": "Guardrail Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "guardrail_id",
+          "guardrail_version"
+        ],
+        "title": "PutGuardrailConfigRequest",
+        "type": "object"
+      },
+      "PutGuardrailExemptionRequest": {
+        "additionalProperties": false,
+        "description": "가드레일 면제 요청 본문.\n\nAttributes:\n    exempt: 면제 여부.\n    reason: 면제 사유. 면제할 때 필수다. 왜 통제를 껐는지 남지 않으면\n        나중에 검토할 수 없다.",
+        "properties": {
+          "exempt": {
+            "title": "Exempt",
+            "type": "boolean"
+          },
+          "reason": {
+            "default": "",
+            "maxLength": 512,
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "exempt"
+        ],
+        "title": "PutGuardrailExemptionRequest",
+        "type": "object"
+      },
       "SelfIssueKeyRequest": {
         "additionalProperties": false,
         "description": "셀프서비스 키 발급 요청.\n\n계정·사용자는 토큰에서 결정하므로 본문으로 받지 않는다. 받으면 다른\n사용자에게 키를 발급하는 경로가 열린다.\n\nAttributes:\n    name: 키 표시 이름. 어디에 쓰는 키인지 구분하는 용도다.\n    allowed_models: 이 키로 호출할 수 있는 모델. 생략하면 계정 설정의\n        기본값을 따른다. 계정이 정한 범위를 넘길 수는 없다.",
@@ -736,7 +785,7 @@
   "info": {
     "description": "Amazon Bedrock 앞단의 OpenAI 호환 게이트웨이.\n\n- `POST /v1/chat/completions` — OpenAI Chat Completions 호환 (스트리밍 지원)\n- `GET /v1/models` — 호출 가능한 모델 목록\n- `/admin/*` — 계정·팀·사용자·API 키 관리 (`X-Admin-Token` 필요)\n- `/analytics/*` — 계정·팀·사용자·모델별 사용량 집계 (`X-Admin-Token` 필요)\n- `/ui` — 모니터링 대시보드",
     "title": "LLM Gateway",
-    "version": "1.16.0"
+    "version": "2.0.0"
   },
   "openapi": "3.1.0",
   "paths": {
@@ -1422,6 +1471,234 @@
           }
         },
         "summary": "Set Auth Config Status",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/admin/accounts/{account_id}/guardrail": {
+      "delete": {
+        "description": "계정의 가드레일 기준선을 삭제한다.\n\n삭제하면 그 계정 전체가 가드레일 없이 동작한다. 면제와 같은 효과를 계정\n단위로 내는 작업이므로 플랫폼 관리자만 할 수 있다.\n\nArgs:\n    account_id: 계정 ID.\n    services: 서비스 컨테이너.\n    request: 현재 요청. 권한 확인에 쓴다.",
+        "operationId": "delete_guardrail_config_admin_accounts__account_id__guardrail_delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "account_id",
+            "required": true,
+            "schema": {
+              "title": "Account Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Admin-Token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Token"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete Guardrail Config",
+        "tags": [
+          "admin"
+        ]
+      },
+      "get": {
+        "description": "계정의 가드레일 기준선을 조회한다.\n\nArgs:\n    account_id: 계정 ID.\n    services: 서비스 컨테이너.\n\nReturns:\n    설정. 없으면 `configured: false` 만 담아 반환한다.\n\nRaises:\n    ResourceNotFoundError: 계정이 없는 경우.",
+        "operationId": "get_guardrail_config_admin_accounts__account_id__guardrail_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "account_id",
+            "required": true,
+            "schema": {
+              "title": "Account Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Admin-Token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Token"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Get Guardrail Config Admin Accounts  Account Id  Guardrail Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Guardrail Config",
+        "tags": [
+          "admin"
+        ]
+      },
+      "put": {
+        "description": "계정의 가드레일 기준선을 만들거나 갱신한다.\n\n저장 전에 AWS 에 그 가드레일이 실제로 있고 사용 가능한 상태인지 확인한다.\n없는 가드레일을 저장하면 이후 모든 요청이 `ValidationException` 으로\n실패한다. 그것을 배포 후에 알게 되는 것보다 여기서 막는 편이 낫다.\n\nArgs:\n    account_id: 계정 ID.\n    payload: 설정 값.\n    services: 서비스 컨테이너.\n\nReturns:\n    저장된 설정.\n\nRaises:\n    ResourceNotFoundError: 계정이 없거나 가드레일을 찾을 수 없는 경우.",
+        "operationId": "put_guardrail_config_admin_accounts__account_id__guardrail_put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "account_id",
+            "required": true,
+            "schema": {
+              "title": "Account Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Admin-Token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Token"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PutGuardrailConfigRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Put Guardrail Config Admin Accounts  Account Id  Guardrail Put",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Put Guardrail Config",
         "tags": [
           "admin"
         ]
@@ -2530,6 +2807,102 @@
         ]
       }
     },
+    "/admin/accounts/{account_id}/teams/{team_id}/guardrail-exemption": {
+      "put": {
+        "description": "팀의 가드레일 면제를 설정한다.\n\nArgs:\n    account_id: 계정 ID.\n    team_id: 팀 ID.\n    payload: 면제 여부와 사유.\n    services: 서비스 컨테이너.\n    request: 현재 요청. 권한 확인에 쓴다.\n\nReturns:\n    갱신된 면제 상태.\n\nRaises:\n    ResourceNotFoundError: 팀이 없는 경우.",
+        "operationId": "put_team_guardrail_exemption_admin_accounts__account_id__teams__team_id__guardrail_exemption_put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "account_id",
+            "required": true,
+            "schema": {
+              "title": "Account Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "team_id",
+            "required": true,
+            "schema": {
+              "title": "Team Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Admin-Token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Token"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PutGuardrailExemptionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Put Team Guardrail Exemption Admin Accounts  Account Id  Teams  Team Id  Guardrail Exemption Put",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Put Team Guardrail Exemption",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
     "/admin/accounts/{account_id}/teams/{team_id}/status": {
       "post": {
         "description": "팀을 활성/비활성 전환한다.\n\n비활성 팀에 속한 키는 인증에서 거부된다. 반영은 메타데이터 캐시\nTTL 만큼 지연될 수 있다.\n\nRaises:\n    ResourceNotFoundError: 계정이나 팀이 없는 경우.",
@@ -3038,6 +3411,102 @@
           }
         },
         "summary": "Update User",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/admin/accounts/{account_id}/users/{user_id}/guardrail-exemption": {
+      "put": {
+        "description": "사용자의 가드레일 면제를 설정한다.\n\n플랫폼 관리자만 바꿀 수 있고 면제할 때는 사유가 필수다.\n\nArgs:\n    account_id: 계정 ID.\n    user_id: 사용자 ID.\n    payload: 면제 여부와 사유.\n    services: 서비스 컨테이너.\n    request: 현재 요청. 권한 확인에 쓴다.\n\nReturns:\n    갱신된 면제 상태.\n\nRaises:\n    ResourceNotFoundError: 사용자가 없는 경우.",
+        "operationId": "put_user_guardrail_exemption_admin_accounts__account_id__users__user_id__guardrail_exemption_put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "account_id",
+            "required": true,
+            "schema": {
+              "title": "Account Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "user_id",
+            "required": true,
+            "schema": {
+              "title": "User Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Admin-Token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Token"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PutGuardrailExemptionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Put User Guardrail Exemption Admin Accounts  Account Id  Users  User Id  Guardrail Exemption Put",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Put User Guardrail Exemption",
         "tags": [
           "admin"
         ]

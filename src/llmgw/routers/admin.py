@@ -952,6 +952,266 @@ def _auth_config_view(config: domain.AccountAuthConfig) -> _JsonDict:
     }
 
 
+def _require_platform_admin(request: fastapi.Request) -> domain.AdminPrincipal:
+    """플랫폼 관리자만 통과시킨다.
+
+    가드레일 면제는 안전 통제를 제거하는 작업이다. 계정 관리자가 자기 계정의
+    통제를 스스로 해제할 수 있으면 통제라고 부를 수 없다. 그래서 계정 범위
+    관리자에게는 허용하지 않는다.
+
+    Args:
+        request: 현재 요청.
+
+    Returns:
+        플랫폼 범위 관리 주체.
+
+    Raises:
+        PermissionDeniedError: 계정 범위 관리자인 경우.
+    """
+    principal = services_module.get_admin_principal(request)
+    if principal.scope is not domain.AdminScope.PLATFORM:
+        raise errors.PermissionDeniedError(
+            "가드레일 면제는 플랫폼 관리자만 바꿀 수 있다. 계정 관리자가"
+            " 자기 계정의 안전 통제를 해제할 수 있으면 통제가 아니다."
+        )
+    return principal
+
+
+def _guardrail_config_view(
+    config: domain.AccountGuardrailConfig,
+) -> _JsonDict:
+    """가드레일 설정을 응답 형태로 만든다."""
+    return {
+        "account_id": config.account_id,
+        "guardrail_id": config.guardrail_id,
+        "guardrail_version": config.guardrail_version,
+        "enabled": config.enabled,
+        "updated_at": config.updated_at,
+    }
+
+
+@router.get("/accounts/{account_id}/guardrail")
+def get_guardrail_config(
+    account_id: str, services: services_module.AdminDep
+) -> _JsonDict:
+    """계정의 가드레일 기준선을 조회한다.
+
+    Args:
+        account_id: 계정 ID.
+        services: 서비스 컨테이너.
+
+    Returns:
+        설정. 없으면 `configured: false` 만 담아 반환한다.
+
+    Raises:
+        ResourceNotFoundError: 계정이 없는 경우.
+    """
+    _require_account(services, account_id)
+    config = services.registry.get_guardrail_config(account_id)
+    if config is None:
+        return {"account_id": account_id, "configured": False}
+    view = _guardrail_config_view(config)
+    view["configured"] = True
+    return view
+
+
+@router.put("/accounts/{account_id}/guardrail")
+def put_guardrail_config(
+    account_id: str,
+    payload: schemas.PutGuardrailConfigRequest,
+    services: services_module.AdminDep,
+) -> _JsonDict:
+    """계정의 가드레일 기준선을 만들거나 갱신한다.
+
+    저장 전에 AWS 에 그 가드레일이 실제로 있고 사용 가능한 상태인지 확인한다.
+    없는 가드레일을 저장하면 이후 모든 요청이 `ValidationException` 으로
+    실패한다. 그것을 배포 후에 알게 되는 것보다 여기서 막는 편이 낫다.
+
+    Args:
+        account_id: 계정 ID.
+        payload: 설정 값.
+        services: 서비스 컨테이너.
+
+    Returns:
+        저장된 설정.
+
+    Raises:
+        ResourceNotFoundError: 계정이 없거나 가드레일을 찾을 수 없는 경우.
+    """
+    _require_account(services, account_id)
+    services.bedrock.verify_guardrail(
+        payload.guardrail_id, payload.guardrail_version
+    )
+    config = domain.AccountGuardrailConfig(
+        account_id=account_id,
+        guardrail_id=payload.guardrail_id,
+        guardrail_version=payload.guardrail_version,
+        enabled=payload.enabled,
+        updated_at=services.clock.now().isoformat(),
+    )
+    services.registry.put_guardrail_config(config)
+    services.guardrails.invalidate(account_id)
+    services.logger.info(
+        "가드레일 기준선을 저장했다",
+        extra={
+            "account_id": account_id,
+            "guardrail_id": payload.guardrail_id,
+            "guardrail_version": payload.guardrail_version,
+            "enabled": payload.enabled,
+        },
+    )
+    view = _guardrail_config_view(config)
+    view["configured"] = True
+    return view
+
+
+@router.delete(
+    "/accounts/{account_id}/guardrail",
+    status_code=http.HTTPStatus.NO_CONTENT,
+)
+def delete_guardrail_config(
+    account_id: str,
+    services: services_module.AdminDep,
+    request: fastapi.Request,
+) -> None:
+    """계정의 가드레일 기준선을 삭제한다.
+
+    삭제하면 그 계정 전체가 가드레일 없이 동작한다. 면제와 같은 효과를 계정
+    단위로 내는 작업이므로 플랫폼 관리자만 할 수 있다.
+
+    Args:
+        account_id: 계정 ID.
+        services: 서비스 컨테이너.
+        request: 현재 요청. 권한 확인에 쓴다.
+    """
+    _require_platform_admin(request)
+    _require_account(services, account_id)
+    services.registry.delete_guardrail_config(account_id)
+    services.guardrails.invalidate(account_id)
+    services.logger.warning(
+        "가드레일 기준선을 삭제했다. 이 계정은 가드레일 없이 동작한다",
+        extra={"account_id": account_id},
+    )
+
+
+@router.put("/accounts/{account_id}/users/{user_id}/guardrail-exemption")
+def put_user_guardrail_exemption(
+    account_id: str,
+    user_id: str,
+    payload: schemas.PutGuardrailExemptionRequest,
+    services: services_module.AdminDep,
+    request: fastapi.Request,
+) -> _JsonDict:
+    """사용자의 가드레일 면제를 설정한다.
+
+    플랫폼 관리자만 바꿀 수 있고 면제할 때는 사유가 필수다.
+
+    Args:
+        account_id: 계정 ID.
+        user_id: 사용자 ID.
+        payload: 면제 여부와 사유.
+        services: 서비스 컨테이너.
+        request: 현재 요청. 권한 확인에 쓴다.
+
+    Returns:
+        갱신된 면제 상태.
+
+    Raises:
+        ResourceNotFoundError: 사용자가 없는 경우.
+    """
+    admin = _require_platform_admin(request)
+    user = services.registry.get_user(account_id, user_id)
+    if user is None:
+        raise errors.ResourceNotFoundError(f"사용자를 찾을 수 없다: {user_id}")
+    services.registry.put_user(
+        user.model_copy(
+            update={
+                "guardrail_exempt": payload.exempt,
+                "guardrail_exempt_reason": (
+                    payload.reason.strip() if payload.exempt else ""
+                ),
+            }
+        ),
+        overwrite=True,
+    )
+    services.logger.warning(
+        "사용자 가드레일 면제를 변경했다",
+        extra={
+            "account_id": account_id,
+            "user_id": user_id,
+            "exempt": payload.exempt,
+            "reason": payload.reason.strip(),
+            "actor": admin.subject,
+        },
+    )
+    return {
+        "account_id": account_id,
+        "user_id": user_id,
+        "guardrail_exempt": payload.exempt,
+        "guardrail_exempt_reason": (
+            payload.reason.strip() if payload.exempt else ""
+        ),
+    }
+
+
+@router.put("/accounts/{account_id}/teams/{team_id}/guardrail-exemption")
+def put_team_guardrail_exemption(
+    account_id: str,
+    team_id: str,
+    payload: schemas.PutGuardrailExemptionRequest,
+    services: services_module.AdminDep,
+    request: fastapi.Request,
+) -> _JsonDict:
+    """팀의 가드레일 면제를 설정한다.
+
+    Args:
+        account_id: 계정 ID.
+        team_id: 팀 ID.
+        payload: 면제 여부와 사유.
+        services: 서비스 컨테이너.
+        request: 현재 요청. 권한 확인에 쓴다.
+
+    Returns:
+        갱신된 면제 상태.
+
+    Raises:
+        ResourceNotFoundError: 팀이 없는 경우.
+    """
+    admin = _require_platform_admin(request)
+    team = services.registry.get_team(account_id, team_id)
+    if team is None:
+        raise errors.ResourceNotFoundError(f"팀을 찾을 수 없다: {team_id}")
+    services.registry.put_team(
+        team.model_copy(
+            update={
+                "guardrail_exempt": payload.exempt,
+                "guardrail_exempt_reason": (
+                    payload.reason.strip() if payload.exempt else ""
+                ),
+            }
+        ),
+        overwrite=True,
+    )
+    services.logger.warning(
+        "팀 가드레일 면제를 변경했다",
+        extra={
+            "account_id": account_id,
+            "team_id": team_id,
+            "exempt": payload.exempt,
+            "reason": payload.reason.strip(),
+            "actor": admin.subject,
+        },
+    )
+    return {
+        "account_id": account_id,
+        "team_id": team_id,
+        "guardrail_exempt": payload.exempt,
+        "guardrail_exempt_reason": (
+            payload.reason.strip() if payload.exempt else ""
+        ),
+    }
+
+
 @router.get("/accounts/{account_id}/auth")
 def get_auth_config(
     account_id: str, services: services_module.AdminDep
