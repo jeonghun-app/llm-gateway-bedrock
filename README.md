@@ -161,7 +161,7 @@ git clone <이 리포지토리>
 cd llm-gateway-bedrock
 
 ./scripts/deploy.sh --allowed-cidr "$(curl -s https://checkip.amazonaws.com)/32" \
-  --image ghcr.io/jeonghun-app/llm-gateway-bedrock:v2.0.0
+  --image ghcr.io/jeonghun-app/llm-gateway-bedrock:v2.0.1
 ```
 
 **데이터는 당신의 AWS 계정을 벗어나지 않는다.** 이미지를 GitHub Container
@@ -179,7 +179,7 @@ Registry 에서 받아오지만, 그것은 배포 리전과 무관하다. 게이
 
 ```bash
 gh attestation verify \
-  oci://ghcr.io/jeonghun-app/llm-gateway-bedrock:v2.0.0 \
+  oci://ghcr.io/jeonghun-app/llm-gateway-bedrock:v2.0.1 \
   --repo jeonghun-app/llm-gateway-bedrock
 ```
 
@@ -203,8 +203,8 @@ Fargate 는 태스크를 띄울 때마다 이미지를 새로 받는다(호스�
 ```bash
 # 한 번만: 공개 이미지를 계정 내 ECR 로 복사
 aws ecr create-repository --repository-name llmgw --region <리전>
-docker pull ghcr.io/jeonghun-app/llm-gateway-bedrock:v2.0.0
-docker tag ghcr.io/jeonghun-app/llm-gateway-bedrock:v2.0.0 \
+docker pull ghcr.io/jeonghun-app/llm-gateway-bedrock:v2.0.1
+docker tag ghcr.io/jeonghun-app/llm-gateway-bedrock:v2.0.1 \
   <계정ID>.dkr.ecr.<리전>.amazonaws.com/llmgw:v1.10.0
 aws ecr get-login-password --region <리전> \
   | docker login --username AWS --password-stdin <계정ID>.dkr.ecr.<리전>.amazonaws.com

@@ -64,6 +64,10 @@ TASK_SUBNET_MODE=""
 # 활성화할 요청 필터 확장. 기본 이미지에는 확장이 없으므로 파생 이미지를
 # 쓸 때만 의미가 있다.
 REQUEST_FILTERS=""
+# --image 가 계정 내 private ECR 을 가리킬 때 지정한다. 태스크 실행 역할의
+# pull 권한을 그 리포지토리로 좁힌다. 공개 레지스트리는 익명 pull 이라
+# 필요 없다.
+IMAGE_ECR_ARN=""
 ALARM_EMAIL=""
 RUN_SEED="yes"
 RUN_SMOKE="yes"
@@ -120,6 +124,11 @@ usage() {
                             확장은 게이트웨이 프로세스 안에서 신뢰된 코드로
                             돈다. 기본 이미지에는 확장이 없으므로 파생
                             이미지와 함께 쓴다. docs/extensions-v1.md 참고.
+  --image-ecr-arn <ARN>     --image 가 계정 내 private ECR 을 가리킬 때 그
+                            리포지토리 ARN. 없으면 태스크 실행 역할에 pull
+                            권한이 없어 태스크가 기동하지 못한다. 공개
+                            레지스트리(GHCR)에는 필요 없다. 예:
+                              arn:aws:ecr:us-east-1:123456789012:repository/llmgw
   --image <URI>             이미 있는 이미지로 배포한다. ECR 스택 생성과
                             로컬 Docker 빌드를 건너뛴다. Docker 를 쓸 수 없는
                             환경에서 쓴다. 예:
@@ -172,6 +181,7 @@ while [[ $# -gt 0 ]]; do
         --image)            PREBUILT_IMAGE="${2:-}"; shift 2 ;;
         --task-subnet-mode) TASK_SUBNET_MODE="${2:-}"; shift 2 ;;
         --request-filters)  REQUEST_FILTERS="${2:-}"; shift 2 ;;
+        --image-ecr-arn)    IMAGE_ECR_ARN="${2:-}"; shift 2 ;;
         --alarm-email)      ALARM_EMAIL="${2:-}"; shift 2 ;;
         --no-seed)          RUN_SEED="no"; shift ;;
         --no-smoke)         RUN_SMOKE="no"; shift ;;
@@ -316,8 +326,15 @@ if [[ -n "${PREBUILT_IMAGE}" ]]; then
     # 사전 빌드 이미지는 우리 계정 밖(GHCR 등)에 있을 수 있다. 그 경우 태스크
     # 실행 역할에 ECR pull 권한을 주지 않는다. 공개 레지스트리는 익명 pull 이라
     # 권한이 필요 없고, 주지 않는 편이 최소권한에 맞다.
-    REPOSITORY_ARN=""
+    REPOSITORY_ARN="${IMAGE_ECR_ARN}"
     info "이미지 ${IMAGE_URI}"
+    if [[ -z "${REPOSITORY_ARN}" ]] \
+        && [[ "${IMAGE_URI}" == *".dkr.ecr."* ]]; then
+        # 사설 ECR 이미지인데 리포지토리 ARN 이 없으면 태스크 실행 역할에
+        # pull 권한이 없어 기동에 실패한다. 배포가 서킷 브레이커로 롤백된
+        # 뒤에 알게 되는 것보다 여기서 막는 편이 낫다.
+        die "사설 ECR 이미지에는 --image-ecr-arn 이 필요하다. 없으면 태스크 실행 역할에 pull 권한이 없다."
+    fi
 else
     log "2/7 ECR 스택 배포"
     aws_cli cloudformation deploy \

@@ -436,15 +436,29 @@ class BedrockGateway:
         error = exc.response.get("Error", {})
         code = str(error.get("Code") or "Unknown")
         message = str(error.get("Message") or "")
+        # AWS 원본 메시지를 로그에 남긴다. 버리면 AccessDenied 가 모델 접근
+        # 문제인지 가드레일 권한 문제인지 구분할 수 없다. 실제로 그것 때문에
+        # 가드레일 도입 검증에서 원인을 찾지 못했다.
+        #
+        # 클라이언트 응답에는 넣지 않는다. AWS 메시지에 계정 ID 나 ARN 이
+        # 들어올 수 있다.
         self._logger.warning(
             "Bedrock 호출이 실패했다",
             extra={
                 "bedrock_error_code": code,
+                "bedrock_error_message": message,
                 "model_id": model_id,
             },
         )
         error_class = _ERROR_MAP.get(code, errors.UpstreamError)
         if error_class is errors.PermissionDeniedError:
+            # 가드레일 관련 거부는 모델 접근 문제로 안내하면 안 된다. 운영자가
+            # 콘솔에서 모델 액세스만 확인하다 원인을 놓친다.
+            if "guardrail" in message.lower():
+                return errors.PermissionDeniedError(
+                    "가드레일에 접근할 수 없다. 태스크 역할 권한과 가드레일"
+                    " 소유 계정·리전을 확인한다."
+                )
             return errors.PermissionDeniedError(
                 f"모델에 접근할 수 없다. Bedrock 모델 액세스를 확인한다:"
                 f" {model_id}"

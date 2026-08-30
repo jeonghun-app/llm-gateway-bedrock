@@ -71,7 +71,8 @@ flowchart TD
 | `routers/admin.py` | 계정·팀·사용자·키 CRUD |
 | `routers/analytics.py` | 집계 조회. `/analytics/dashboard` 가 한 번에 전부 반환 |
 | `routers/health.py` | `/healthz`(얕음, ALB 용), `/readyz`(의존성 확인) |
-| `auth.py` | 키 인증, 모델 허용 검사, 예산 검사 |
+| `auth.py` | 키 인증, 모델 허용 검사, 예산 검사, 레이트 리밋 |
+| `guardrails.py` | 가드레일 정책 해석 (계정 기준선, 팀·사용자 면제) |
 | `usage.py` | 비용 계산, 사용량 기록, 메트릭 발행 |
 | `analytics.py` | 집계 테이블 조회와 축별 합산 |
 | `pricing.py` | 단가 표, 모델 ID 정규화, 비용 계산 |
@@ -181,10 +182,26 @@ flowchart TD
   budget -->|초과| e429["429 · 실패로 집계"]
   budget -->|통과| xlate["OpenAI → Converse 변환"]
   xlate -->|형식 오류| e400["400 · 실패로 집계"]
-  xlate --> call["Bedrock 호출"]
+  xlate --> filt["요청 필터 확장<br/>(활성 확장이 있는 경우만)"]
+  filt -->|거부| e403f["403 · 실패로 집계"]
+  filt -->|고장·시간초과| e503["503 · 실패로 집계"]
+  filt --> grail["가드레일 판정<br/>계정 기준선 · 팀/사용자 면제"]
+  grail --> call["Bedrock 호출<br/>(판정이 적용이면 guardrailConfig 첨부)"]
   call -->|오류| eup["4xx/5xx · 실패로 집계"]
+  call -->|가드레일 개입| gi["200 · content_filter<br/>개입으로 집계"]
   call -->|성공| ok["200 · 성공으로 집계"]
 ```
+
+가드레일 판정은 **요청 필터 확장 뒤**에 온다. 확장이 요청을 변형할 수 있으므로,
+실제로 Bedrock 에 보내는 내용이 검사 대상이어야 한다.
+
+가드레일 개입은 오류가 아니다. Bedrock 이 200 과 차단 메시지를 반환하므로
+게이트웨이도 200 을 유지하고 `finish_reason` 을 `content_filter` 로 준다. 가드레일
+검사와 (출력 단계 개입이면) 모델 생성 비용이 이미 발생했다. 사용량 레코드에는
+`guardrail_applied` 와 `guardrail_intervened` 를 나눠 남긴다 — "적용했는데 개입
+안 함" 과 "적용조차 안 함" 은 다른 상태다.
+
+자세한 정책과 실측 근거는 [`guardrails.md`](guardrails.md) 에 있다.
 
 401 만 사용량을 남기지 않는다. 호출 주체를 특정할 수 없어 어느 계정에 귀속할지
 결정할 수 없기 때문이다. 인증 이후의 모든 실패는 주체가 확정되어 있으므로 실패

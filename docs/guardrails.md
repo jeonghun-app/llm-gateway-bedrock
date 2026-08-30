@@ -155,11 +155,25 @@ Bedrock 이 **200 과 차단 메시지**를 반환한다. 게이트웨이도 200
 
 ## IAM
 
-런타임에 `guardrailConfig` 를 붙이는 것은 **기존 `bedrock:InvokeModel` 권한으로
-충분하다.** 태스크 역할과 동일한 권한만 가진 역할을 만들어 실측했다.
-`bedrock:ApplyGuardrail` 은 필요하지 않다.
+태스크 역할에 두 권한을 추가했다.
 
-저장 시 검증을 위해 `bedrock:GetGuardrail` 을 태스크 역할에 추가했다.
+| 권한 | 용도 | 범위 |
+|---|---|---|
+| `bedrock:ApplyGuardrail` | Converse 에 `guardrailConfig` 첨부 | 이 계정의 guardrail/* |
+| `bedrock:GetGuardrail` | 저장 시 존재·상태 검증 | `*` |
+
+`InvokeModel` 만으로는 부족하다. 배포된 태스크의 실제 오류로 확인했다.
+
+```
+is not authorized to perform: bedrock:ApplyGuardrail
+on resource: arn:aws:bedrock:us-east-1:...:guardrail/...
+because no identity-based policy allows the bedrock:ApplyGuardrail action
+```
+
+이 원인을 찾을 수 있었던 것은 오류 변환이 AWS 원본 메시지를 로그에 남기기
+때문이다. 이전에는 메시지를 버리고 "모델에 접근할 수 없다" 로 바꿔 안내했는데,
+그러면 운영자가 콘솔에서 모델 액세스만 확인하다 원인을 놓친다. 지금은 메시지에
+`guardrail` 이 있으면 가드레일 권한 문제로 안내한다.
 
 ## 비용
 
