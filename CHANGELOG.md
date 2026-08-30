@@ -3,6 +3,56 @@
 형식은 [Keep a Changelog](https://keepachangelog.com/ko/1.1.0/) 를 따르고,
 버전은 [유의적 버전](https://semver.org/lang/ko/)을 쓴다.
 
+## [2.0.1] - 2026-08-30
+
+**v2.0.0 의 가드레일이 실제로는 동작하지 않았다.** 배포 후 검증에서 모든 요청이
+403 으로 실패했다.
+
+### 수정
+
+- **`bedrock:ApplyGuardrail` 권한이 없어 가드레일 붙인 요청이 전부 실패했다.**
+  `InvokeModel` 만으로는 부족하다.
+
+  ```
+  is not authorized to perform: bedrock:ApplyGuardrail
+  on resource: arn:aws:bedrock:us-east-1:...:guardrail/...
+  ```
+
+  v2.0.0 에서 나는 "런타임은 `InvokeModel` 로 충분하고 `ApplyGuardrail` 은
+  필요하지 않다" 고 적었다. **틀렸다.** 태스크 역할과 같은 권한을 가진 역할을
+  만들어 시험했을 때는 성공했지만 그 시험이 신뢰할 수 없었다(한 번은 세션 이름이
+  짧아 `assume-role` 이 실패하고 내 자격증명으로 대체 실행됐다). 배포된 워크로드의
+  실제 오류가 권위 있는 근거다.
+
+  이 계정의 `guardrail/*` 로 범위를 좁혀 부여했다.
+
+- **오류 변환이 AWS 원본 메시지를 버려 진단이 불가능했다.** `AccessDenied` 를
+  무조건 "모델에 접근할 수 없다. Bedrock 모델 액세스를 확인한다" 로 바꿔
+  안내했다. 그러면 운영자가 콘솔에서 모델 액세스만 확인하다 원인을 놓친다. 실제로
+  그 때문에 위 원인을 찾는 데 시간이 걸렸다.
+
+  이제 AWS 원본 메시지를 로그에 남기고(`bedrock_error_message`), 메시지에
+  `guardrail` 이 있으면 가드레일 권한 문제로 안내한다. 클라이언트 응답에는 원본을
+  넣지 않는다 — AWS 메시지에 계정 ID 와 ARN 이 들어온다.
+
+- **`deploy.sh --image` 로 사설 ECR 이미지를 쓰면 태스크가 기동하지 못했다.**
+  v1.11.0 에서 `--image` 를 주면 `EcrRepositoryArn` 을 비우게 했는데, 사설 ECR
+  이미지에는 pull 권한이 필요하다. README 는 "프로덕션: 계정 내 private ECR 로
+  복사" 경로를 안내하면서 그 ARN 을 줄 CLI 옵션이 없었다.
+
+  `--image-ecr-arn` 을 추가했고, 사설 ECR 이미지인데 ARN 이 없으면 배포 전에
+  거부한다. 서킷 브레이커로 롤백된 뒤에 알게 되는 것보다 낫다.
+
+### 문서
+
+- **`README.en.md` 에 가드레일 절이 없었다.** 한국어에만 추가돼 있었다.
+- `docs/architecture.md` 요청 흐름도에 요청 필터와 가드레일 판정을 넣었다.
+  가드레일은 확장이 요청을 변형한 뒤에 판정한다.
+- `SECURITY.md` 에 가드레일 절을 추가했다. 통제를 끄는 경로의 권한 경계,
+  차단 내용을 저장하지 않는 이유, 면제 만료 부재를 적었다.
+- `docs/runbook.md` 에 가드레일 운영 절차를 추가했다. 기준선 설정, 버전 교체,
+  면제 검토, 개입 조사, 증상별 대응.
+
 ## [2.0.0] - 2026-08-30
 
 **Amazon Bedrock Guardrails 를 게이트웨이가 강제한다.** 콘솔에서 가드레일을

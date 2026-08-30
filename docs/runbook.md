@@ -359,6 +359,87 @@ curl -s -H "X-Admin-Token: $ADMIN_TOKEN" "$GATEWAY_URL/admin/models" \
 
 ---
 
+## 5-1. 가드레일 운영
+
+### 기준선 설정
+
+```bash
+# 1. 가드레일을 만들고 숫자 버전을 만든다. DRAFT 는 게이트웨이가 거부한다.
+aws bedrock create-guardrail --region $REGION --name org-baseline \
+  --blocked-input-messaging "입력이 정책에 의해 차단되었습니다." \
+  --blocked-outputs-messaging "응답이 정책에 의해 차단되었습니다." \
+  --content-policy-config '{"filtersConfig":[{"type":"VIOLENCE","inputStrength":"HIGH","outputStrength":"HIGH"}]}'
+
+GID=<위 출력의 guardrailId>
+aws bedrock create-guardrail-version --region $REGION --guardrail-identifier $GID
+
+# 2. 계정 기준선으로 설정한다. 게이트웨이가 저장 전에 존재와 READY 를 확인한다.
+curl -X PUT "$GATEWAY_URL/admin/accounts/<계정>/guardrail" \
+  -H "X-Admin-Token: $ADMIN_TOKEN" -H 'Content-Type: application/json' \
+  -d "{\"guardrail_id\":\"$GID\",\"guardrail_version\":\"1\"}"
+
+# 3. 적용 확인
+curl "$GATEWAY_URL/admin/accounts/<계정>/guardrail" -H "X-Admin-Token: $ADMIN_TOKEN"
+```
+
+설정 변경은 최대 10초 뒤 모든 태스크에 반영된다(정책 캐시 TTL). 여러 태스크가
+도는 배포에서는 그 사이 태스크마다 판정이 다를 수 있다.
+
+### 가드레일 버전 교체
+
+버전은 고정되어 있으므로 새 버전을 만들고 기준선을 다시 설정한다. 진행 중인
+요청은 이전 버전으로 끝난다.
+
+```bash
+aws bedrock update-guardrail --region $REGION --guardrail-identifier $GID ...
+NEW=$(aws bedrock create-guardrail-version --region $REGION \
+        --guardrail-identifier $GID --query version --output text)
+curl -X PUT "$GATEWAY_URL/admin/accounts/<계정>/guardrail" \
+  -H "X-Admin-Token: $ADMIN_TOKEN" -H 'Content-Type: application/json' \
+  -d "{\"guardrail_id\":\"$GID\",\"guardrail_version\":\"$NEW\"}"
+```
+
+### 면제 검토
+
+**면제에 만료가 없다.** 시스템이 임시 예외의 영구화를 막지 않으므로 정기적으로
+검토해야 한다.
+
+```bash
+# 면제된 사용자 찾기
+curl "$GATEWAY_URL/admin/accounts/<계정>/users" -H "X-Admin-Token: $ADMIN_TOKEN" \
+  | jq '.data[] | select(.guardrail_exempt == true)
+        | {user_id, guardrail_exempt_reason}'
+
+# 면제 변경 이력
+aws logs filter-log-events --region $REGION --log-group-name $LOG_GROUP \
+  --filter-pattern '{ $.message = "*가드레일 면제를 변경했다" }'
+```
+
+면제는 플랫폼 관리자만 바꿀 수 있다. 공유 관리 토큰을 쓰면 로그의 `actor` 가
+고정 문자열이라 사람을 식별할 수 없다. 개인 추적이 필요하면 OIDC 를 관리 경로로
+쓴다.
+
+### 개입 조사
+
+```bash
+# 개입한 요청 (차단된 내용은 저장하지 않으므로 건수와 주체만 보인다)
+aws logs filter-log-events --region $REGION --log-group-name $LOG_GROUP \
+  --filter-pattern '{ $.bedrock_error_code = "*" }'
+```
+
+차단된 프롬프트·응답 원문은 어디에도 남지 않는다. `trace` 를 끄기 때문이다.
+어떤 규칙에 걸렸는지 알아야 하면 AWS 콘솔의 가드레일 지표를 본다.
+
+### 증상별 대응
+
+| 증상 | 원인과 조치 |
+|---|---|
+| `403` + "가드레일에 접근할 수 없다" | 태스크 역할 권한 또는 가드레일 소유 계정·리전 불일치. 가드레일이 배포 리전과 같은 리전에 있어야 한다 |
+| 기준선 설정이 `404` | 가드레일이 없거나 `READY` 가 아니다. `aws bedrock get-guardrail` 로 상태를 본다 |
+| 기준선 설정이 `400` | `DRAFT` 버전을 넣었다. 숫자 버전을 만들어 지정한다 |
+| 스트리밍 첫 응답이 느려졌다 | 정상이다. `sync` 모드가 가드레일 판정까지 버퍼링한다. 실측 약 +0.66초 |
+| AWS 청구서가 대시보드보다 크다 | 가드레일 사용료는 집계에 포함되지 않는다. Converse 응답이 가드레일 사용량을 주지 않아 계산할 수 없다 |
+
 ## 6. 프로덕션 전환 체크리스트
 
 기본 구성은 dev·데모 검증을 1순위로 맞춰져 있다. 실사용 전에 다음을 반드시

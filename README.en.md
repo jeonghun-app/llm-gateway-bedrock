@@ -33,6 +33,7 @@ DynamoDB tables.
 - [Usage](#usage)
 - [Identity provider integration (OIDC)](#identity-provider-integration-oidc)
 - [Monitoring dashboard](#monitoring-dashboard)
+- [Guardrails](#guardrails)
 - [Extension points](#extension-points)
 - [Running locally](#running-locally)
 - [Tests](#tests)
@@ -165,7 +166,7 @@ git clone <this repository>
 cd llm-gateway-bedrock
 
 ./scripts/deploy.sh --allowed-cidr "$(curl -s https://checkip.amazonaws.com)/32" \
-  --image ghcr.io/jeonghun-app/llm-gateway-bedrock:v2.0.0
+  --image ghcr.io/jeonghun-app/llm-gateway-bedrock:v2.0.1
 ```
 
 **Your data never leaves your AWS account.** The image is pulled from GitHub
@@ -189,8 +190,8 @@ recovery. For production, copy the image into your account and use that URI.
 ```bash
 # Once: copy the public image into your own ECR
 aws ecr create-repository --repository-name llmgw --region <region>
-docker pull ghcr.io/jeonghun-app/llm-gateway-bedrock:v2.0.0
-docker tag ghcr.io/jeonghun-app/llm-gateway-bedrock:v2.0.0 \
+docker pull ghcr.io/jeonghun-app/llm-gateway-bedrock:v2.0.1
+docker tag ghcr.io/jeonghun-app/llm-gateway-bedrock:v2.0.1 \
   <account-id>.dkr.ecr.<region>.amazonaws.com/llmgw:v1.10.0
 aws ecr get-login-password --region <region> \
   | docker login --username AWS --password-stdin <account-id>.dkr.ecr.<region>.amazonaws.com
@@ -617,6 +618,49 @@ toolchain.
 
 Everything the dashboard reads comes from pre-aggregated tables, so its response
 time does not change as request volume grows.
+
+---
+
+## Guardrails
+
+The gateway attaches Amazon Bedrock Guardrails to every request. You set an
+account baseline and may exempt specific teams or users.
+
+```bash
+# Account baseline. The gateway verifies the guardrail exists and is READY
+# before storing it.
+curl -X PUT "$GATEWAY_URL/admin/accounts/acme/guardrail" \
+  -H "X-Admin-Token: $ADMIN_TOKEN" -H 'Content-Type: application/json' \
+  -d '{"guardrail_id":"abc123xyz","guardrail_version":"2"}'
+
+# Exempt a user. A reason is required.
+curl -X PUT "$GATEWAY_URL/admin/accounts/acme/users/alice/guardrail-exemption" \
+  -H "X-Admin-Token: $ADMIN_TOKEN" -H 'Content-Type: application/json' \
+  -d '{"exempt":true,"reason":"red-team evaluation (TICKET-1234)"}'
+```
+
+**Why the gateway has to be in the middle:** creating a guardrail in the console
+does not apply it. Every Converse call must carry the identifier, so if an
+application omits that field the control silently disappears. When the gateway
+attaches it, clients cannot remove or substitute it.
+
+**Streaming is forced to `sync`.** Measured against a real guardrail, `async`
+delivers the text that should have been blocked to the client first and only
+then reports the intervention. Saving 0.66 s of latency makes the control
+meaningless.
+
+**Only numeric versions are accepted.** `DRAFT` works at runtime but its
+contents can change without notice, so it is rejected.
+
+**Only platform admins can change exemptions,** and a reason is mandatory. If an
+account admin could lift the safety control on their own account, it would not
+be a control.
+
+**Guardrail charges are not included in the dashboard cost.** The Converse
+response does not report guardrail usage, so it cannot be computed. Adding an
+unknown cost as zero would invalidate budgets, so it is not added.
+
+See [`docs/guardrails.md`](docs/guardrails.md) for details.
 
 ---
 
