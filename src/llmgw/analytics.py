@@ -348,6 +348,15 @@ class AnalyticsService:
                     "latency_ms": int(item.get("latency_ms", 0) or 0),
                     "status_code": int(item.get("status_code", 0) or 0),
                     "error_code": str(item.get("error_code", "")),
+                    # 가드레일 관측. "적용했는데 개입 안 함" 과 "적용조차 안
+                    # 함" 은 다른 상태라 나눠 노출한다. 차단된 내용은 저장하지
+                    # 않으므로 여기에도 없다.
+                    "guardrail_applied": bool(
+                        item.get("guardrail_applied", False)
+                    ),
+                    "guardrail_intervened": bool(
+                        item.get("guardrail_intervened", False)
+                    ),
                     "streamed": bool(item.get("streamed", False)),
                 }
             )

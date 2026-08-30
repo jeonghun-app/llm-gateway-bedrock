@@ -12,6 +12,7 @@ import functools
 import http.server
 import json
 import pathlib
+import re
 import threading
 import typing
 import urllib.parse
@@ -102,6 +103,10 @@ class _ApiStub:
         ]
         # 계정별 외부 인증 설정. 처음에는 연결되지 않은 상태다.
         self.auth_config: _JsonDict | None = None
+        # 계정 가드레일 기준선. 처음에는 없는 상태다.
+        self.guardrail: _JsonDict | None = None
+        # 면제 상태. (kind, id) -> {exempt, reason}
+        self.exemptions: dict[tuple[str, str], _JsonDict] = {}
         self.calls: list[tuple[str, str, _JsonDict | None]] = []
         self._failure: tuple[str, str, int, str] | None = None
 
@@ -115,6 +120,29 @@ class _ApiStub:
     ) -> None:
         """다음 일치 요청 한 건만 지정한 오류로 응답한다."""
         self._failure = (method, path, status, message)
+
+    def _subjects(self, kind: str) -> list[_JsonDict]:
+        """면제 상태를 반영한 팀/사용자 목록을 만든다."""
+        rows = (
+            [{"team_id": "platform", "name": "플랫폼팀"}]
+            if kind == "team"
+            else [{"user_id": "alice", "name": "앨리스"}]
+        )
+        out: list[_JsonDict] = []
+        for row in rows:
+            subject = row.get("team_id") or row.get("user_id") or ""
+            state = self.exemptions.get((kind, str(subject)), {})
+            out.append(
+                {
+                    **row,
+                    "account_id": "acme",
+                    "status": "active",
+                    "monthly_budget_usd": None,
+                    "guardrail_exempt": bool(state.get("exempt", False)),
+                    "guardrail_exempt_reason": str(state.get("reason", "")),
+                }
+            )
+        return out
 
     def handle(self, route: sync_api.Route, request: sync_api.Request) -> None:
         """Playwright route 콜백으로 요청을 처리한다."""
@@ -169,10 +197,10 @@ class _ApiStub:
                 return
 
         if path.endswith("/teams") and method == "GET":
-            self._respond(route, 200, {"data": []})
+            self._respond(route, 200, {"data": self._subjects("team")})
             return
         if path.endswith("/users") and method == "GET":
-            self._respond(route, 200, {"data": []})
+            self._respond(route, 200, {"data": self._subjects("user")})
             return
         if path.endswith("/keys"):
             if method == "GET":
@@ -211,6 +239,54 @@ class _ApiStub:
                     **self.keys[0],
                     "key_prefix": "sk-llmgw-test-rot0",
                     "api_key": "sk-llmgw-test-PLAINTEXT-ROTATED",
+                },
+            )
+            return
+
+        if path.endswith("/guardrail") and method == "GET":
+            if self.guardrail is None:
+                self._respond(
+                    route, 200, {"account_id": "acme", "configured": False}
+                )
+            else:
+                self._respond(
+                    route, 200, {**self.guardrail, "configured": True}
+                )
+            return
+
+        if path.endswith("/guardrail") and method == "PUT":
+            body = self._request_body(request) or {}
+            self.guardrail = {
+                "account_id": "acme",
+                "guardrail_id": body.get("guardrail_id", ""),
+                "guardrail_version": body.get("guardrail_version", ""),
+                "enabled": bool(body.get("enabled", True)),
+                "updated_at": "2026-08-30T00:00:00Z",
+            }
+            self._respond(route, 200, {**self.guardrail, "configured": True})
+            return
+
+        if path.endswith("/guardrail") and method == "DELETE":
+            self.guardrail = None
+            self._respond(route, 204, None)
+            return
+
+        if path.endswith("/guardrail-exemption") and method == "PUT":
+            body = self._request_body(request) or {}
+            parts = path.strip("/").split("/")
+            kind = "team" if "teams" in parts else "user"
+            subject = parts[-2]
+            self.exemptions[(kind, subject)] = {
+                "exempt": bool(body.get("exempt", False)),
+                "reason": str(body.get("reason", "")),
+            }
+            self._respond(
+                route,
+                200,
+                {
+                    "account_id": "acme",
+                    "guardrail_exempt": bool(body.get("exempt", False)),
+                    "guardrail_exempt_reason": str(body.get("reason", "")),
                 },
             )
             return
@@ -755,3 +831,106 @@ def test_정렬버튼라벨이언어를따른다(ui: _UiSession) -> None:
         or ""
     )
     assert "sort descending" in english
+
+
+# ---------------------------------------------------------------------------
+# 가드레일 탭
+#
+# 안전 통제를 다루는 화면이라 "설정했다고 믿는데 실제로는 없는" 상태가 가장
+# 위험하다. 기준선 유무가 화면에 드러나는지, 면제가 눈에 띄는지를 고정한다.
+# ---------------------------------------------------------------------------
+
+
+def test_기준선이없으면화면에경고가보인다(ui: _UiSession) -> None:
+    page = ui.page
+    _open_manage(page, "guardrail")
+    state = page.locator(".guardrail-state")
+    sync_api.expect(state).to_be_visible()
+    sync_api.expect(state).to_have_class(re.compile(r"guardrail-off"))
+    sync_api.expect(state).to_contain_text("가드레일 없이 동작한다")
+
+
+def test_기준선을설정하면상태가바뀐다(ui: _UiSession) -> None:
+    page = ui.page
+    _open_manage(page, "guardrail")
+    page.get_by_role("button", name="기준선 설정", exact=True).click()
+    page.locator('[name="guardrail_id"]').fill("gr-abc123")
+    page.locator('[name="guardrail_version"]').fill("2")
+    page.get_by_role("button", name="저장", exact=True).click()
+
+    state = page.locator(".guardrail-state")
+    sync_api.expect(state).to_have_class(re.compile(r"guardrail-on"))
+    sync_api.expect(state).to_contain_text("gr-abc123")
+    assert (
+        "PUT",
+        "/admin/accounts/acme/guardrail",
+        {
+            "guardrail_id": "gr-abc123",
+            "guardrail_version": "2",
+            "enabled": True,
+        },
+    ) in ui.api.calls
+
+
+def test_면제에는사유입력이요구된다(ui: _UiSession) -> None:
+    page = ui.page
+    ui.api.guardrail = {
+        "account_id": "acme",
+        "guardrail_id": "gr-abc123",
+        "guardrail_version": "2",
+        "enabled": True,
+        "updated_at": "",
+    }
+    _open_manage(page, "guardrail")
+
+    # 사용자 면제 절의 면제 버튼을 누른다.
+    page.locator(".manage-subsection").filter(
+        has_text="사용자 면제"
+    ).get_by_role("button", name="면제", exact=True).click()
+    sync_api.expect(page.locator('[name="reason"]')).to_be_visible()
+    page.locator('[name="reason"]').fill("레드팀 평가 (TICKET-1)")
+    page.get_by_role("button", name="저장", exact=True).click()
+
+    assert (
+        "PUT",
+        "/admin/accounts/acme/users/alice/guardrail-exemption",
+        {"exempt": True, "reason": "레드팀 평가 (TICKET-1)"},
+    ) in ui.api.calls
+
+
+def test_면제된대상은목록에서구분된다(ui: _UiSession) -> None:
+    page = ui.page
+    ui.api.guardrail = {
+        "account_id": "acme",
+        "guardrail_id": "gr-abc123",
+        "guardrail_version": "2",
+        "enabled": True,
+        "updated_at": "",
+    }
+    ui.api.exemptions[("user", "alice")] = {
+        "exempt": True,
+        "reason": "평가용",
+    }
+    _open_manage(page, "guardrail")
+
+    section = page.locator(".manage-subsection").filter(has_text="사용자 면제")
+    # 면제는 통제가 꺼진 상태다. 정상보다 눈에 띄어야 한다.
+    sync_api.expect(section.locator(".badge-error")).to_have_text("면제")
+    sync_api.expect(section).to_contain_text("평가용")
+    sync_api.expect(section).to_contain_text("만료가 없으므로")
+
+
+def test_키폼에만료와분당한도가있다(ui: _UiSession) -> None:
+    page = ui.page
+    _open_manage(page, "keys")
+    page.get_by_role("button", name="키 발급", exact=True).click()
+    # v1.10.0 에서 API 에만 있고 UI 에 없던 필드다.
+    sync_api.expect(page.locator('[name="rpm_limit"]')).to_be_visible()
+    sync_api.expect(page.locator('[name="expires_at"]')).to_be_visible()
+
+
+def test_사용자폼에분당한도가있다(ui: _UiSession) -> None:
+    page = ui.page
+    _open_manage(page, "users")
+    page.get_by_role("button", name="사용자 만들기", exact=True).click()
+    sync_api.expect(page.locator('[name="rpm_limit"]')).to_be_visible()

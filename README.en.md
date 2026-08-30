@@ -166,7 +166,7 @@ git clone <this repository>
 cd llm-gateway-bedrock
 
 ./scripts/deploy.sh --allowed-cidr "$(curl -s https://checkip.amazonaws.com)/32" \
-  --image ghcr.io/jeonghun-app/llm-gateway-bedrock:v2.0.1
+  --image ghcr.io/jeonghun-app/llm-gateway-bedrock:v2.1.0
 ```
 
 **Your data never leaves your AWS account.** The image is pulled from GitHub
@@ -190,8 +190,8 @@ recovery. For production, copy the image into your account and use that URI.
 ```bash
 # Once: copy the public image into your own ECR
 aws ecr create-repository --repository-name llmgw --region <region>
-docker pull ghcr.io/jeonghun-app/llm-gateway-bedrock:v2.0.1
-docker tag ghcr.io/jeonghun-app/llm-gateway-bedrock:v2.0.1 \
+docker pull ghcr.io/jeonghun-app/llm-gateway-bedrock:v2.1.0
+docker tag ghcr.io/jeonghun-app/llm-gateway-bedrock:v2.1.0 \
   <account-id>.dkr.ecr.<region>.amazonaws.com/llmgw:v1.10.0
 aws ecr get-login-password --region <region> \
   | docker login --username AWS --password-stdin <account-id>.dkr.ecr.<region>.amazonaws.com

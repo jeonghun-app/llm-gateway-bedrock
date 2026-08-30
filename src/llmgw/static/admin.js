@@ -122,6 +122,23 @@
    * @param {string} raw 입력 문자열.
    * @returns {?number} 숫자 또는 null.
    */
+  /**
+   * 정수 입력을 숫자 또는 null 로 바꾼다.
+   *
+   * 빈 값은 "제한 없음" 이지 0 이 아니다. 0 으로 보내면 모든 요청이 막힌다.
+   *
+   * @param {string} raw 입력 문자열.
+   * @returns {number|null} 정수 또는 `null`.
+   */
+  function parseCount(raw) {
+    const trimmed = (raw || '').trim();
+    if (!trimmed) {
+      return null;
+    }
+    const value = Number(trimmed);
+    return Number.isFinite(value) && value > 0 ? Math.floor(value) : null;
+  }
+
   function parseBudget(raw) {
     const trimmed = String(raw == null ? '' : raw).trim();
     if (trimmed === '') {
@@ -180,6 +197,9 @@
 
       const input = document.createElement('input');
       input.id = inputId;
+      // name 을 함께 둔다. 폼 의미가 명확해지고 브라우저 자동완성이
+      // 필드를 구분할 수 있다.
+      input.name = field.name;
       input.type = field.type || 'text';
       if (field.placeholder) {
         input.placeholder = field.placeholder;
@@ -742,12 +762,20 @@
               step: '0.01',
               hint: t('비우면 상위 예산만 적용'),
             },
+            {
+              name: 'rpm_limit',
+              label: t('분당 요청 한도'),
+              type: 'number',
+              step: '1',
+              hint: t('비우면 제한 없음. 예산 초과폭을 줄이는 데 함께 쓴다.'),
+            },
           ],
           async function (values) {
             const payload = {
               user_id: values.user_id.trim(),
               name: values.name.trim(),
               monthly_budget_usd: parseBudget(values.monthly_budget_usd),
+              rpm_limit: parseCount(values.rpm_limit),
             };
             if (values.email.trim()) {
               payload.email = values.email.trim();
@@ -792,6 +820,14 @@
                   value: user.monthly_budget_usd,
                   hint: t('비우면 상위 예산만 적용'),
                 },
+                {
+                  name: 'rpm_limit',
+                  label: t('분당 요청 한도'),
+                  type: 'number',
+                  step: '1',
+                  value: user.rpm_limit,
+                  hint: t('비우면 제한 없음. 예산 초과폭을 줄이는 데 함께 쓴다.'),
+                },
               ],
               async function (values) {
                 await api(
@@ -802,6 +838,7 @@
                     email: values.email.trim(),
                     team_id: values.team_id.trim(),
                     monthly_budget_usd: parseBudget(values.monthly_budget_usd),
+                    rpm_limit: parseCount(values.rpm_limit),
                   }
                 );
                 setStatus(t('사용자를 수정했다.'), 'ok');
@@ -954,6 +991,19 @@
               step: '0.01',
               hint: t('비우면 상위 예산만 적용'),
             },
+            {
+              name: 'rpm_limit',
+              label: t('분당 요청 한도'),
+              type: 'number',
+              step: '1',
+              hint: t('비우면 사용자 설정을 따른다.'),
+            },
+            {
+              name: 'expires_at',
+              label: t('만료 시각'),
+              placeholder: '2027-01-01T00:00:00Z',
+              hint: t('비우면 만료 없음. ISO-8601 UTC. 만료된 키는 401 이 되고 키는 남는다.'),
+            },
           ],
           async function (values) {
             const created = await api('POST', base + '/keys', {
@@ -961,6 +1011,8 @@
               name: values.name.trim(),
               allowed_models: splitModels(values.allowed_models),
               monthly_budget_usd: parseBudget(values.monthly_budget_usd),
+              rpm_limit: parseCount(values.rpm_limit),
+              expires_at: values.expires_at.trim() || null,
             });
             setStatus(t('키를 발급했다.'), 'ok');
             await renderManage();
@@ -998,6 +1050,21 @@
                   value: key.monthly_budget_usd,
                   hint: t('비우면 상위 예산만 적용'),
                 },
+                {
+                  name: 'rpm_limit',
+                  label: t('분당 요청 한도'),
+                  type: 'number',
+                  step: '1',
+                  value: key.rpm_limit,
+                  hint: t('비우면 사용자 설정을 따른다.'),
+                },
+                {
+                  name: 'expires_at',
+                  label: t('만료 시각'),
+                  value: key.expires_at,
+                  placeholder: '2027-01-01T00:00:00Z',
+                  hint: t('비우면 만료 없음. ISO-8601 UTC. 만료된 키는 401 이 되고 키는 남는다.'),
+                },
               ],
               async function (values) {
                 await api(
@@ -1007,6 +1074,8 @@
                     name: values.name.trim(),
                     allowed_models: splitModels(values.allowed_models),
                     monthly_budget_usd: parseBudget(values.monthly_budget_usd),
+                    rpm_limit: parseCount(values.rpm_limit),
+                    expires_at: values.expires_at.trim() || null,
                   }
                 );
                 setStatus(t('키를 수정했다.'), 'ok');
@@ -1384,6 +1453,273 @@
    *
    * @returns {!Promise<void>}
    */
+  /**
+   * 가드레일 탭을 그린다.
+   *
+   * 안전 통제를 다루는 화면이라 두 가지를 화면에 드러낸다.
+   *
+   * 1. 기준선이 설정돼 있는지. 없으면 이 계정은 가드레일 없이 동작한다.
+   * 2. 누가 면제됐는지와 그 사유. 면제에 만료가 없으므로 화면에서 검토할 수
+   *    있어야 임시 예외가 영구화되는 것을 사람이 막을 수 있다.
+   */
+  async function renderGuardrail() {
+    const accountId = requireAccountId();
+    const base = '/admin/accounts/' + encodeURIComponent(accountId);
+    const [config, teams, users] = await Promise.all([
+      api('GET', base + '/guardrail'),
+      api('GET', base + '/teams'),
+      api('GET', base + '/users'),
+    ]);
+    const configured = config.configured === true;
+
+    const container = document.createElement('div');
+
+    const hint = document.createElement('p');
+    hint.className = 'manage-hint';
+    hint.textContent =
+      t('Amazon Bedrock Guardrails 를 게이트웨이가 모든 요청에 붙인다.') +
+      t(' 콘솔에서 가드레일을 만들어도 호출마다 식별자를 실어야 적용되므로,') +
+      t(' 게이트웨이가 붙이면 클라이언트가 빼거나 바꿀 수 없다.');
+    container.appendChild(hint);
+
+    // 기준선 상태를 눈에 띄게 보여준다. 없으면 통제가 없는 상태다.
+    const state = document.createElement('div');
+    state.className = configured
+      ? 'guardrail-state guardrail-on'
+      : 'guardrail-state guardrail-off';
+    const stateText = document.createElement('strong');
+    stateText.textContent = configured
+      ? t('기준선 적용 중')
+      : t('기준선이 없다. 이 계정은 가드레일 없이 동작한다.');
+    state.appendChild(stateText);
+    if (configured) {
+      const detail = document.createElement('span');
+      detail.textContent =
+        ' · ' + config.guardrail_id + ' v' + config.guardrail_version +
+        (config.enabled ? '' : ' · ' + t('꺼짐'));
+      state.appendChild(detail);
+    }
+    container.appendChild(state);
+
+    const toolbar = document.createElement('div');
+    toolbar.className = 'manage-toolbar';
+
+    const editButton = document.createElement('button');
+    editButton.type = 'button';
+    editButton.className = 'primary';
+    editButton.textContent = configured
+      ? t('기준선 수정')
+      : t('기준선 설정');
+    editButton.addEventListener('click', function () {
+      openGuardrailForm(accountId, base, configured ? config : null);
+    });
+    toolbar.appendChild(editButton);
+
+    if (configured) {
+      const remove = document.createElement('button');
+      remove.type = 'button';
+      remove.textContent = t('기준선 삭제');
+      remove.addEventListener('click', function () {
+        openConfirm(
+          t('이 계정 전체가 가드레일 없이 동작하게 된다. 플랫폼 관리자만') +
+            t(' 할 수 있다.'),
+          async function () {
+            await api('DELETE', base + '/guardrail');
+            setStatus(t('기준선을 삭제했다.'), 'ok');
+            renderManage();
+          },
+          { confirmLabel: t('삭제'), danger: true }
+        );
+      });
+      toolbar.appendChild(remove);
+    }
+    container.appendChild(toolbar);
+
+    // 면제 목록. 면제된 것만이 아니라 전체를 보여주고 상태를 표시한다.
+    // 그래야 "면제가 없다" 는 것도 확인할 수 있다.
+    container.appendChild(
+      buildExemptionSection(
+        t('팀 면제'),
+        base + '/teams',
+        (teams.data || []).map(function (item) {
+          return {
+            id: item.team_id,
+            name: item.name,
+            exempt: item.guardrail_exempt === true,
+            reason: item.guardrail_exempt_reason || '',
+          };
+        }),
+        'team'
+      )
+    );
+    container.appendChild(
+      buildExemptionSection(
+        t('사용자 면제'),
+        base + '/users',
+        (users.data || []).map(function (item) {
+          return {
+            id: item.user_id,
+            name: item.name,
+            exempt: item.guardrail_exempt === true,
+            reason: item.guardrail_exempt_reason || '',
+          };
+        }),
+        'user'
+      )
+    );
+
+    dom.managePanel.replaceChildren(container);
+  }
+
+  /**
+   * 면제 목록 한 절을 만든다.
+   *
+   * @param {string} title 절 제목.
+   * @param {string} listBase 대상 목록의 기준 경로.
+   * @param {Array<Object>} rows 대상 목록.
+   * @param {string} kind `team` 또는 `user`.
+   * @returns {HTMLElement} 완성된 절.
+   */
+  function buildExemptionSection(title, listBase, rows, kind) {
+    const section = document.createElement('section');
+    section.className = 'manage-subsection';
+
+    const heading = document.createElement('h3');
+    heading.textContent = title;
+    section.appendChild(heading);
+
+    const exemptCount = rows.filter(function (row) {
+      return row.exempt;
+    }).length;
+    const summary = document.createElement('p');
+    summary.className = 'manage-hint';
+    summary.textContent =
+      exemptCount === 0
+        ? t('면제된 대상이 없다.')
+        : t('면제 ') + exemptCount + t('건. 면제에는 만료가 없으므로 정기적으로 검토한다.');
+    section.appendChild(summary);
+
+    section.appendChild(
+      buildTable(
+        [t('ID'), t('이름'), t('가드레일'), t('사유'), t('작업')],
+        rows.map(function (row) {
+          return [
+            codeCell(row.id),
+            textCell(row.name),
+            exemptBadge(row.exempt),
+            textCell(row.reason || '—'),
+            buildActions([
+              {
+                label: row.exempt ? t('면제 해제') : t('면제'),
+                onClick: function () {
+                  openExemptionForm(listBase, row, kind);
+                },
+              },
+            ]),
+          ];
+        })
+      )
+    );
+    return section;
+  }
+
+  /**
+   * 면제 상태 배지를 만든다.
+   *
+   * @param {boolean} exempt 면제 여부.
+   * @returns {HTMLElement} 배지 요소.
+   */
+  function exemptBadge(exempt) {
+    const cell = document.createElement('td');
+    const badge = document.createElement('span');
+    // 면제는 통제가 꺼진 상태다. 정상(적용)보다 눈에 띄어야 한다.
+    badge.className = exempt ? 'badge badge-error' : 'badge badge-ok';
+    badge.textContent = exempt ? t('면제') : t('적용');
+    cell.appendChild(badge);
+    return cell;
+  }
+
+  /**
+   * 면제 설정 폼을 연다.
+   *
+   * @param {string} listBase 대상 목록의 기준 경로.
+   * @param {Object} row 대상.
+   * @param {string} kind `team` 또는 `user`.
+   */
+  function openExemptionForm(listBase, row, kind) {
+    const path =
+      listBase + '/' + encodeURIComponent(row.id) + '/guardrail-exemption';
+    if (row.exempt) {
+      openConfirm(
+        t('면제를 해제한다. 이 대상은 다시 가드레일을 거친다.'),
+        async function () {
+          await api('PUT', path, { exempt: false });
+          setStatus(t('면제를 해제했다.'), 'ok');
+          renderManage();
+        },
+        { confirmLabel: t('해제') }
+      );
+      return;
+    }
+    openFormModal(
+      t('면제: ') + row.id,
+      [
+        {
+          name: 'reason',
+          label: t('사유'),
+          placeholder: t('예: 레드팀 평가 (TICKET-1234)'),
+          hint: t('왜 통제를 껐는지 남지 않으면 나중에 검토할 수 없다. 필수다.'),
+        },
+      ],
+      async function (values) {
+        await api('PUT', path, {
+          exempt: true,
+          reason: values.reason,
+        });
+        setStatus(t('면제했다.'), 'ok');
+        renderManage();
+      }
+    );
+    void kind;
+  }
+
+  /**
+   * 가드레일 기준선 폼을 연다.
+   *
+   * @param {string} accountId 계정 ID.
+   * @param {string} base 계정 기준 경로.
+   * @param {Object|null} current 현재 설정. 없으면 신규.
+   */
+  function openGuardrailForm(accountId, base, current) {
+    openFormModal(
+      current ? t('기준선 수정: ') + accountId : t('기준선 설정: ') + accountId,
+      [
+        {
+          name: 'guardrail_id',
+          label: t('가드레일 ID 또는 ARN'),
+          value: current ? current.guardrail_id : '',
+          placeholder: t('AWS 콘솔의 Guardrail ID'),
+        },
+        {
+          name: 'guardrail_version',
+          label: t('버전'),
+          value: current ? current.guardrail_version : '',
+          placeholder: '1',
+          hint: t('숫자만. DRAFT 는 내용이 예고 없이 바뀌어 거부된다.'),
+        },
+      ],
+      async function (values) {
+        await api('PUT', base + '/guardrail', {
+          guardrail_id: values.guardrail_id,
+          guardrail_version: values.guardrail_version,
+          enabled: true,
+        });
+        setStatus(t('기준선을 저장했다.'), 'ok');
+        renderManage();
+      }
+    );
+  }
+
   async function renderManage() {
     const token = dom.token.value.trim();
     if (!token) {
@@ -1400,6 +1736,8 @@
         await renderUsers();
       } else if (activeManageView === 'auth') {
         await renderAuthConfig();
+      } else if (activeManageView === 'guardrail') {
+        await renderGuardrail();
       } else {
         await renderKeys();
       }
