@@ -722,6 +722,7 @@ LLMGW_BASE_URL="$GATEWAY_URL" LLMGW_ADMIN_TOKEN="$ADMIN_TOKEN" \
 | ECR | 저장 용량 | 이미지 몇 개 기준 약 $0.1 |
 | Secrets Manager | 시크릿당 | 약 $0.40 |
 | CloudWatch Logs | 수집 + 저장 | 트래픽에 비례, 소규모 약 $1 |
+| S3 (CFN 템플릿) | 저장 용량 | 약 $0 (30일 후 자동 삭제) |
 | VPC 게이트웨이 엔드포인트 | 없음 | $0 |
 | **합계 (유휴)** | | **약 $37** |
 | Bedrock | 토큰 | 사용량에 비례. 별도 |

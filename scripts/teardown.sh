@@ -120,6 +120,19 @@ if [[ "${PURGE_DATA}" == "yes" ]]; then
         fi
     done
 
+    # 템플릿 버킷은 CloudFormation 이 관리하지 않는다. 스택을 만들기 위해
+    # 필요한 버킷을 그 스택이 만들 수는 없어서다. 여기서 지운다.
+    log "템플릿 버킷 확인"
+    account_id="$(aws_cli sts get-caller-identity --query Account --output text)"
+    bucket="${PROJECT_NAME}-${ENVIRONMENT}-cfn-${account_id}-${AWS_REGION}"
+    if aws_cli s3api head-bucket --bucket "${bucket}" >/dev/null 2>&1; then
+        # 객체가 남아 있으면 버킷 삭제가 실패한다.
+        aws_cli s3 rm "s3://${bucket}" --recursive >/dev/null 2>&1 || true
+        aws_cli s3api delete-bucket --bucket "${bucket}" >/dev/null 2>&1 \
+            && info "${bucket} 삭제" \
+            || info "${bucket} 삭제 실패 (수동 확인 필요)"
+    fi
+
     log "잔여 시크릿 확인"
     secret_name="${PROJECT_NAME}/${ENVIRONMENT}/admin-token"
     if aws_cli secretsmanager describe-secret --secret-id "${secret_name}" \
