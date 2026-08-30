@@ -47,6 +47,9 @@ class Settings(pydantic_settings.BaseSettings):
         service_name: 구조화 로그의 `service` 필드 값.
         metrics_namespace: CloudWatch EMF 메트릭 네임스페이스.
         request_timeout_seconds: Bedrock 호출 읽기 타임아웃.
+        request_filters: 활성화할 요청 필터 확장. `module:Class` 명세를 쉼표로
+            구분한다. 적은 순서가 적용 순서다. 비면 확장을 쓰지 않는다.
+        extension_timeout_seconds: 확장 하나의 제한 시간(초).
     """
 
     model_config = pydantic_settings.SettingsConfigDict(
@@ -111,6 +114,21 @@ class Settings(pydantic_settings.BaseSettings):
     #            고르는 것을 막으면서 명시적 사용은 허용한다.
     unpriced_model_policy: typing.Literal["allow", "reject", "hide"] = "allow"
 
+    # 활성화할 요청 필터 확장. `module:Class` 를 쉼표로 구분한다.
+    #
+    # 확장은 게이트웨이 프로세스 안에서 신뢰된 코드로 돈다. 프롬프트를 읽고
+    # 태스크 역할 자격증명에 접근할 수 있다. 설치만으로 활성화되면 의존성을
+    # 하나 추가한 것이 그 권한을 준 것이 되므로, 여기 명시한 것만 import
+    # 하고 실행한다. 적은 순서가 적용 순서이며 순서가 결과를 바꾼다.
+    request_filters: str = ""
+
+    # 확장 하나의 제한 시간. Bedrock 읽기 타임아웃(기본 300초)보다 훨씬 짧게
+    # 잡는다. 필터는 지역 검사나 짧은 정책 조회여야 하고, 여기서 오래
+    # 기다리면 게이트웨이의 워커가 묶인다.
+    extension_timeout_seconds: float = pydantic.Field(
+        default=1.0, gt=0.0, le=30.0
+    )
+
     @property
     def oidc_platform_admin_group_list(self) -> tuple[str, ...]:
         """플랫폼 관리자로 인정할 그룹 목록.
@@ -139,6 +157,18 @@ class Settings(pydantic_settings.BaseSettings):
             공백이 제거된 모델 ID 튜플. 설정이 비어 있으면 빈 튜플.
         """
         raw = self.default_allowed_models.strip()
+        if not raw:
+            return ()
+        return tuple(item.strip() for item in raw.split(",") if item.strip())
+
+    @property
+    def request_filter_list(self) -> tuple[str, ...]:
+        """활성 요청 필터 명세를 순서대로 반환한다.
+
+        Returns:
+            `module:Class` 문자열 튜플. 설정이 비어 있으면 빈 튜플.
+        """
+        raw = self.request_filters.strip()
         if not raw:
             return ()
         return tuple(item.strip() for item in raw.split(",") if item.strip())

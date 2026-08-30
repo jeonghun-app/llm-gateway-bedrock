@@ -27,6 +27,7 @@ from llmgw import oidc as oidc_module
 from llmgw import pricing as pricing_module
 from llmgw import repository
 from llmgw import usage as usage_module
+from llmgw.extensions import runtime as extensions_runtime
 
 _ADMIN_TOKEN_HEADER = "X-Admin-Token"
 _BEARER_PREFIX = "bearer "
@@ -53,6 +54,7 @@ class Services:
         clock: 시각 제공자.
         id_factory: 식별자 생성기.
         oidc: 외부 인증 토큰 검증기.
+        request_filters: 요청 필터 확장 체인. 활성 확장이 없으면 빈 체인이다.
     """
 
     settings: config.Settings
@@ -68,6 +70,7 @@ class Services:
     clock: clock_module.Clock
     id_factory: clock_module.IdFactory
     oidc: oidc_module.OidcVerifier
+    request_filters: extensions_runtime.RequestFilterChain
 
 
 def build_services(settings: config.Settings) -> Services:
@@ -83,6 +86,9 @@ def build_services(settings: config.Settings) -> Services:
         FileNotFoundError: 단가 파일이 없는 경우.
         ValueError: 단가 파일 형식이 잘못된 경우. 잘못된 단가로 조용히
             0원 집계를 만드는 것보다 시작을 실패시키는 편이 안전하다.
+        extensions_runtime.ExtensionLoadError: 설정에 나열한 확장을 불러오지
+            못한 경우. 확장 없이 기동하면 운영자는 필터가 동작한다고 믿는
+            상태에서 필터 없이 트래픽을 받는다.
     """
     logger = observability.create_logger(
         service_name=settings.service_name, level=settings.log_level
@@ -131,6 +137,24 @@ def build_services(settings: config.Settings) -> Services:
         },
     )
 
+    # 확장은 요청을 받기 전에 모두 불러온다. 실패하면 예외가 올라가 기동이
+    # 중단된다. 확장 없이 기동하면 운영자는 필터가 동작한다고 믿는 상태에서
+    # 필터 없이 트래픽을 받는다.
+    request_filters = extensions_runtime.RequestFilterChain(
+        filters=extensions_runtime.load_request_filters(
+            settings.request_filter_list
+        ),
+        logger=logger,
+        timeout_seconds=settings.extension_timeout_seconds,
+    )
+    if not request_filters.is_empty:
+        # 어떤 확장이 활성인지 기동 로그에 남긴다. 운영자가 배포 후 확인할
+        # 수 있는 유일한 지점이다.
+        logger.info(
+            "요청 필터 확장을 활성화했다",
+            extra={"extensions": list(request_filters.names)},
+        )
+
     return Services(
         settings=settings,
         logger=logger,
@@ -164,6 +188,7 @@ def build_services(settings: config.Settings) -> Services:
         clock=clock_module.SYSTEM_CLOCK,
         id_factory=clock_module.UUID_ID_FACTORY,
         oidc=oidc_verifier,
+        request_filters=request_filters,
     )
 
 

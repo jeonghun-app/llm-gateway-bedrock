@@ -1,6 +1,6 @@
 [project]
 name = "llmgw"
-version = "1.12.1"
+version = "1.13.0"
 description = "Amazon Bedrock 앞단의 OpenAI 호환 LLM Gateway"
 requires-python = ">=3.13"
 readme = "README.md"
@@ -74,8 +74,10 @@ ignore = [
 
 [tool.mypy]
 python_version = "3.13"
-mypy_path = "src"
-packages = ["llmgw"]
+# 참조 확장(examples)도 검사한다. 확장점 계약이 실제로 타입 검사를 통과하는
+# 코드로 구현될 수 있는지 검증하는 역할이라, 본 코드와 같은 기준을 적용한다.
+mypy_path = "src:."
+packages = ["llmgw", "examples"]
 strict = true
 warn_unreachable = true
 # moto / uvicorn 등 일부 서드파티는 타입 스텁이 없다.

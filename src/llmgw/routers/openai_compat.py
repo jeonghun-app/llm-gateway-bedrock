@@ -27,6 +27,7 @@ from llmgw import pricing as pricing_module
 from llmgw import schemas
 from llmgw import services as services_module
 from llmgw import translate
+from llmgw.extensions import v1 as extensions_v1
 
 router = fastapi.APIRouter(prefix="/v1", tags=["openai-compat"])
 
@@ -161,8 +162,10 @@ def chat_completions(
         payload: OpenAI 형식 요청 본문.
         services: 서비스 컨테이너.
         authorization: `Bearer <api-key>` 헤더.
-        x_request_id: 클라이언트가 지정한 요청 ID. 재시도 시 같은 값을
-            보내면 사용량이 중복 집계되지 않는다.
+        x_request_id: 클라이언트가 지정한 상관관계 ID. 응답 헤더와 모든
+            로그, 사용량 레코드에 그대로 남는다. **멱등 키가 아니다.**
+            Bedrock 호출은 한 번마다 실제 비용이 발생하므로 같은 값으로
+            재시도하면 호출 횟수만큼 집계된다.
 
     Returns:
         비스트리밍이면 OpenAI 형식 응답 딕셔너리, 스트리밍이면
@@ -182,6 +185,13 @@ def chat_completions(
         _enforce_pricing_policy(services, payload.model)
         services.authenticator.enforce_model(principal, payload.model)
         services.authenticator.enforce_budget(principal, started_at)
+        payload = _apply_request_filters(
+            services=services,
+            principal=principal,
+            payload=payload,
+            request_id=request_id,
+            started_at=started_at,
+        )
         bedrock_request = translate.to_bedrock_request(payload)
     except errors.GatewayError as exc:
         _record_failure(
@@ -221,6 +231,92 @@ def chat_completions(
         bedrock_request=bedrock_request,
         request_id=request_id,
         started_at=started_at,
+    )
+
+
+def _apply_request_filters(
+    *,
+    services: services_module.Services,
+    principal: domain.Principal,
+    payload: schemas.ChatCompletionRequest,
+    request_id: str,
+    started_at: datetime.datetime,
+) -> schemas.ChatCompletionRequest:
+    """요청 필터 확장을 적용한 요청을 반환한다.
+
+    확장에는 내부 스키마가 아니라 `extensions.v1` 의 불변 DTO 를 넘긴다.
+    확장이 제자리에서 수정하지 못하게 하고, 내부 리팩터링이 확장을 깨뜨리지
+    않게 하려는 것이다.
+
+    확장은 모델과 스트리밍 여부를 바꿀 수 없다. 그 둘은 컨텍스트에만 있고
+    반환 DTO 에는 없다. 모델을 바꿀 수 있으면 이미 통과한 모델 허용 목록과
+    단가 정책 검사를 우회하게 된다.
+
+    Args:
+        services: 서비스 컨테이너.
+        principal: 인증된 요청 주체.
+        payload: 원본 요청.
+        request_id: 상관관계 ID.
+        started_at: 요청 수신 시각.
+
+    Returns:
+        확장이 반환한 값을 반영한 요청. 활성 확장이 없으면 받은 객체를
+        그대로 반환한다.
+
+    Raises:
+        RequestRejectedError: 확장이 요청을 거부한 경우.
+        ExtensionUnavailableError: 확장이 고장났거나 제한 시간을 넘긴 경우.
+    """
+    chain = services.request_filters
+    if chain.is_empty:
+        # 확장이 없으면 DTO 변환 비용도 들이지 않는다.
+        return payload
+
+    context = extensions_v1.RequestContext(
+        principal=extensions_v1.ExtensionPrincipal(
+            account_id=principal.account_id,
+            team_id=principal.team_id,
+            user_id=principal.user_id,
+            key_id=principal.key_id,
+        ),
+        request_id=request_id,
+        model_id=payload.model,
+        started_at=started_at,
+        streamed=payload.stream,
+        deadline_at=started_at
+        + datetime.timedelta(
+            seconds=services.settings.extension_timeout_seconds
+        ),
+    )
+    original = extensions_v1.RequestPayload(
+        messages=tuple(
+            extensions_v1.Message(role=message.role, content=message.text())
+            for message in payload.messages
+        ),
+        max_tokens=payload.effective_max_tokens,
+        temperature=payload.temperature,
+        top_p=payload.top_p,
+        stop_sequences=tuple(payload.stop_sequences),
+    )
+    filtered = chain.apply(original, context=context)
+    if filtered == original:
+        # 아무 확장도 바꾸지 않았다. 원본을 그대로 쓰면 `extra` 로 들어온
+        # 필드가 보존된다.
+        return payload
+
+    # 변형된 값으로 새 요청을 만든다. model 과 stream 은 원본에서 가져온다.
+    return payload.model_copy(
+        update={
+            "messages": [
+                schemas.ChatMessage(role=item.role, content=item.content)
+                for item in filtered.messages
+            ],
+            "max_tokens": filtered.max_tokens,
+            "max_completion_tokens": None,
+            "temperature": filtered.temperature,
+            "top_p": filtered.top_p,
+            "stop": list(filtered.stop_sequences) or None,
+        }
     )
 
 
