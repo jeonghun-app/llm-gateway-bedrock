@@ -597,6 +597,63 @@
   /**
    * 현재 선택된 탭에 맞는 표를 그린다.
    */
+  // 탭별 정렬 상태. 탭을 옮겨도 각자의 정렬이 유지된다. 값은
+  // { key, direction } 이고 direction 은 'asc' | 'desc' 다.
+  const sortState = {};
+
+  function compareValues(left, right, numeric) {
+    // 빈 값은 방향과 무관하게 마지막으로 보낸다. 정렬을 뒤집을 때마다
+    // 빈 칸이 위로 올라오면 목록을 읽기 어렵다.
+    const leftEmpty = left == null || left === '';
+    const rightEmpty = right == null || right === '';
+    if (leftEmpty && rightEmpty) return 0;
+    if (leftEmpty) return 1;
+    if (rightEmpty) return -1;
+
+    if (numeric) {
+      const a = Number(left);
+      const b = Number(right);
+      // 숫자로 못 읽히는 값은 문자열로 비교한다.
+      if (!Number.isNaN(a) && !Number.isNaN(b)) return a - b;
+    }
+    // ISO 8601 문자열은 사전순이 곧 시간순이라 별도 파싱이 필요 없다.
+    return String(left).localeCompare(String(right), locale());
+  }
+
+  function sortRows(rows, columns) {
+    const state = sortState[activeView];
+    if (!state) return rows;
+    const column = columns.filter(function (item) {
+      return item.key === state.key;
+    })[0];
+    if (!column) return rows;
+
+    // 표시용 포맷 문자열이 아니라 원시 값으로 정렬한다. "$1,234" 를 문자열로
+    // 비교하면 순서가 엉킨다.
+    //
+    // 원본 배열을 건드리지 않는다. lastDashboard 를 정렬하면 차트가 같은
+    // 배열을 다시 그릴 때 순서가 바뀐다.
+    const sorted = rows.slice();
+    const sign = state.direction === 'desc' ? -1 : 1;
+    sorted.sort(function (left, right) {
+      return sign * compareValues(left[column.key], right[column.key],
+        column.numeric);
+    });
+    return sorted;
+  }
+
+  function toggleSort(key) {
+    const current = sortState[activeView];
+    if (current && current.key === key) {
+      current.direction = current.direction === 'asc' ? 'desc' : 'asc';
+    } else {
+      // 처음 누르면 내림차순으로 시작한다. 비용·요청 수처럼 "많은 것부터"
+      // 보고 싶은 열이 대부분이다.
+      sortState[activeView] = { key: key, direction: 'desc' };
+    }
+    renderTable();
+  }
+
   function renderTable() {
     const allColumns = tableColumns();
     const columns =
@@ -620,18 +677,62 @@
 
     const headRow = dom.table.querySelector('thead tr');
     headRow.replaceChildren();
+    const state = sortState[activeView];
     columns.forEach(function (column) {
       const cell = document.createElement('th');
       cell.scope = 'col';
-      cell.textContent = column.title;
       if (column.numeric) {
         cell.className = 'numeric';
+      }
+
+      // 정렬 조작은 네이티브 button 으로 만든다. Enter·Space·포커스 표시를
+      // 브라우저가 처리하므로 키보드 핸들러를 따로 두지 않아도 된다.
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'sort-button';
+      const active = state && state.key === column.key;
+      const nextDirection =
+        active && state.direction === 'desc' ? 'asc' : 'desc';
+      button.setAttribute(
+        'aria-label',
+        column.title + ', ' +
+          (nextDirection === 'asc' ? t('오름차순 정렬') : t('내림차순 정렬'))
+      );
+
+      const label = document.createElement('span');
+      label.textContent = column.title;
+      button.appendChild(label);
+
+      const arrow = document.createElement('span');
+      // 화살표는 장식이다. 정렬 상태는 aria-sort 로 전달되므로 보조기술이
+      // 두 번 읽지 않도록 숨긴다.
+      arrow.setAttribute('aria-hidden', 'true');
+      arrow.className = 'sort-arrow';
+      arrow.textContent = active
+        ? state.direction === 'desc' ? '\u2193' : '\u2191'
+        : '\u2195';
+      button.appendChild(arrow);
+
+      button.addEventListener('click', function () {
+        toggleSort(column.key);
+      });
+      cell.appendChild(button);
+
+      // aria-sort 는 현재 정렬 중인 열에만 둔다. 모든 열에 none 을 두면
+      // 스크린리더가 불필요하게 읽는다.
+      if (active) {
+        cell.setAttribute(
+          'aria-sort',
+          state.direction === 'desc' ? 'descending' : 'ascending'
+        );
       }
       headRow.appendChild(cell);
     });
 
     const body = dom.table.querySelector('tbody');
     body.replaceChildren();
+
+    rows = sortRows(rows, columns);
 
     if (!rows.length) {
       const emptyRow = document.createElement('tr');

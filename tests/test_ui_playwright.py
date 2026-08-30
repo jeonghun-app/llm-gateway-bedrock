@@ -649,3 +649,109 @@ def test_인증연동탭에서OIDC설정을저장하고차단한다(ui: _UiSessi
     sync_api.expect(page.get_by_text("차단됨", exact=True)).to_be_visible()
 
     assert ui.page_errors == []
+
+
+# ---------------------------------------------------------------------------
+# 표 정렬
+#
+# 마우스 클릭만 검증하면 키보드 사용자가 정렬을 못 쓰는 것을 놓친다. 네이티브
+# button 을 쓴 이유가 키보드 지원이므로 Tab·Enter 경로도 함께 고정한다.
+# ---------------------------------------------------------------------------
+
+
+def _cost_column_values(page: sync_api.Page) -> list[str]:
+    """상세 표의 비용 열 값을 위에서부터 읽는다."""
+    headers = page.locator("#detail-table thead th")
+    index = -1
+    for position in range(headers.count()):
+        if "비용" in (headers.nth(position).inner_text() or ""):
+            index = position
+            break
+    assert index >= 0, "비용 열을 찾지 못했다"
+    cells = page.locator(f"#detail-table tbody tr td:nth-child({index + 1})")
+    return [cells.nth(row).inner_text().strip() for row in range(cells.count())]
+
+
+def test_표머리를누르면정렬되고aria_sort가붙는다(ui: _UiSession) -> None:
+    page = ui.page
+    _load_accounts(page)
+    page.locator("#tab-user").click()
+
+    cost_header = page.locator("#detail-table thead th").filter(has_text="비용")
+    # 정렬 전에는 어떤 열에도 aria-sort 가 없어야 한다. 모든 열에 none 을
+    # 두면 스크린리더가 불필요하게 읽는다.
+    assert page.locator("#detail-table thead th[aria-sort]").count() == 0
+
+    cost_header.locator("button").click()
+    sync_api.expect(cost_header).to_have_attribute("aria-sort", "descending")
+    descending = _cost_column_values(page)
+
+    # 다시 누르면 방향이 바뀐다.
+    cost_header.locator("button").click()
+    sync_api.expect(cost_header).to_have_attribute("aria-sort", "ascending")
+    ascending = _cost_column_values(page)
+
+    assert descending == list(reversed(ascending))
+    # 정렬 중인 열은 하나뿐이어야 한다.
+    assert page.locator("#detail-table thead th[aria-sort]").count() == 1
+
+
+def test_키보드로도정렬할수있다(ui: _UiSession) -> None:
+    page = ui.page
+    _load_accounts(page)
+    page.locator("#tab-user").click()
+
+    button = (
+        page.locator("#detail-table thead th")
+        .filter(has_text="비용")
+        .locator("button")
+    )
+    button.focus()
+    page.keyboard.press("Enter")
+    sync_api.expect(
+        page.locator("#detail-table thead th").filter(has_text="비용")
+    ).to_have_attribute("aria-sort", "descending")
+
+
+def test_탭을옮기면각자의정렬이유지된다(ui: _UiSession) -> None:
+    page = ui.page
+    _load_accounts(page)
+
+    page.locator("#tab-user").click()
+    page.locator("#detail-table thead th").filter(has_text="비용").locator(
+        "button"
+    ).click()
+
+    # 다른 탭은 정렬되지 않은 상태여야 한다.
+    page.locator("#tab-model").click()
+    assert page.locator("#detail-table thead th[aria-sort]").count() == 0
+
+    # 돌아오면 정렬이 유지된다.
+    page.locator("#tab-user").click()
+    sync_api.expect(
+        page.locator("#detail-table thead th").filter(has_text="비용")
+    ).to_have_attribute("aria-sort", "descending")
+
+
+def test_정렬버튼라벨이언어를따른다(ui: _UiSession) -> None:
+    page = ui.page
+    _load_accounts(page)
+    page.locator("#tab-user").click()
+
+    button = (
+        page.locator("#detail-table thead th")
+        .filter(has_text="비용")
+        .locator("button")
+    )
+    label = button.get_attribute("aria-label") or ""
+    assert "내림차순 정렬" in label
+
+    page.locator('.lang-switch button[data-lang="en"]').click()
+    english = (
+        page.locator("#detail-table thead th")
+        .filter(has_text="Cost")
+        .locator("button")
+        .get_attribute("aria-label")
+        or ""
+    )
+    assert "sort descending" in english

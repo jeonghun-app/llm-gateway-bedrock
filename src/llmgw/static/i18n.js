@@ -26,6 +26,8 @@
    * @type {!Object<string, string>}
    */
   const EN = {
+    '오름차순 정렬': 'sort ascending',
+    '내림차순 정렬': 'sort descending',
     // -- 셸과 내비게이션 --
     'LLM Gateway 모니터링': 'LLM Gateway Monitoring',
     '본문으로 건너뛰기': 'Skip to main content',

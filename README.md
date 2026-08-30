@@ -160,7 +160,7 @@ git clone <이 리포지토리>
 cd llm-gateway-bedrock
 
 ./scripts/deploy.sh --allowed-cidr "$(curl -s https://checkip.amazonaws.com)/32" \
-  --image ghcr.io/jeonghun-app/llm-gateway-bedrock:v1.14.0
+  --image ghcr.io/jeonghun-app/llm-gateway-bedrock:v1.15.0
 ```
 
 **데이터는 당신의 AWS 계정을 벗어나지 않는다.** 이미지를 GitHub Container
@@ -178,7 +178,7 @@ Registry 에서 받아오지만, 그것은 배포 리전과 무관하다. 게이
 
 ```bash
 gh attestation verify \
-  oci://ghcr.io/jeonghun-app/llm-gateway-bedrock:v1.14.0 \
+  oci://ghcr.io/jeonghun-app/llm-gateway-bedrock:v1.15.0 \
   --repo jeonghun-app/llm-gateway-bedrock
 ```
 
@@ -202,8 +202,8 @@ Fargate 는 태스크를 띄울 때마다 이미지를 새로 받는다(호스�
 ```bash
 # 한 번만: 공개 이미지를 계정 내 ECR 로 복사
 aws ecr create-repository --repository-name llmgw --region <리전>
-docker pull ghcr.io/jeonghun-app/llm-gateway-bedrock:v1.14.0
-docker tag ghcr.io/jeonghun-app/llm-gateway-bedrock:v1.14.0 \
+docker pull ghcr.io/jeonghun-app/llm-gateway-bedrock:v1.15.0
+docker tag ghcr.io/jeonghun-app/llm-gateway-bedrock:v1.15.0 \
   <계정ID>.dkr.ecr.<리전>.amazonaws.com/llmgw:v1.10.0
 aws ecr get-login-password --region <리전> \
   | docker login --username AWS --password-stdin <계정ID>.dkr.ecr.<리전>.amazonaws.com
@@ -524,6 +524,12 @@ OpenAI 스펙 중 Bedrock Converse 에 대응이 없는 필드(`presence_penalty
 
 기간 프리셋(오늘/7일/30일/90일)과 임의 구간 조회, 30초 자동 새로고침을
 지원한다. 조회 범위 상한은 93일이다.
+
+표 머리를 누르면 그 열로 정렬한다. 다시 누르면 방향이 바뀌고, 탭마다 정렬
+상태가 따로 유지된다. 정렬은 화면에 보이는 포맷 문자열이 아니라 원시 값으로
+하므로 `$1,234` 와 `$987` 의 순서가 뒤바뀌지 않는다. 머리글은 네이티브 버튼이라
+키보드로도 조작할 수 있고, 현재 정렬 상태는 `aria-sort` 로 스크린리더에
+전달된다.
 
 화면은 [Flowbite](https://flowbite.com) 디자인 시스템(Tailwind 팔레트와 컴포넌트
 규격)을 따른다. 다만 라이브러리를 가져오지 않고 같은 규격을 CSS 로 직접
