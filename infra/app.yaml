@@ -116,6 +116,40 @@ Parameters:
     AllowedPattern: "^(10|172|192)\\.[0-9]{1,3}\\.[0-9]{1,3}\\.[0-9]{1,3}/(1[6-9]|2[0-4])$"
     Description: 새로 만들 VPC 의 CIDR. 사설 대역이어야 한다.
 
+  TaskSubnetMode:
+    Type: String
+    Default: public
+    AllowedValues: [public, private-nat]
+    Description: >-
+      태스크를 어느 서브넷에 둘지 정한다.
+
+      public (기본): 퍼블릭 서브넷 + 공인 IP. 추가 비용이 없다. 인바운드는
+      보안 그룹이 ALB 만 허용하므로 인터넷에서 태스크로 직접 들어올 수는
+      없지만, 태스크가 공인 IP 를 가진다는 점이 보안 정책에 걸리는 조직이 있다.
+
+      private-nat: 프라이빗 서브넷 + NAT Gateway. 태스크에 공인 IP 가 붙지
+      않는다. NAT Gateway 가 월 약 33 USD + 데이터 처리비를 더한다. 인터페이스
+      VPC 엔드포인트로 대신하는 방법도 있지만 이 구성에서 필요한 5종
+      (bedrock-runtime, ecr.api, ecr.dkr, secretsmanager, logs)을 2개 AZ 에
+      두면 월 약 73 USD 로 NAT 보다 비싸다.
+
+      private-nat 를 쓰면서 GHCR 같은 외부 레지스트리 이미지를 쓸 수 있다.
+      NAT 를 통해 인터넷으로 나가기 때문이다.
+
+  PrivateSubnet1Cidr:
+    Type: String
+    Default: 10.60.10.0/24
+    AllowedPattern: "^(10|172|192)\\.[0-9]{1,3}\\.[0-9]{1,3}\\.[0-9]{1,3}/(1[6-9]|2[0-8])$"
+    Description: >-
+      프라이빗 서브넷 1 의 CIDR. TaskSubnetMode 가 private-nat 일 때만 쓰인다.
+
+  PrivateSubnet2Cidr:
+    Type: String
+    Default: 10.60.11.0/24
+    AllowedPattern: "^(10|172|192)\\.[0-9]{1,3}\\.[0-9]{1,3}\\.[0-9]{1,3}/(1[6-9]|2[0-8])$"
+    Description: >-
+      프라이빗 서브넷 2 의 CIDR. TaskSubnetMode 가 private-nat 일 때만 쓰인다.
+
   PublicSubnet1Cidr:
     Type: String
     Default: 10.60.0.0/20
@@ -233,6 +267,8 @@ Conditions:
   # private ECR 을 쓸 때만 pull 권한을 붙인다. 공개 레지스트리는 익명 pull 이라
   # 권한이 필요 없고, 주지 않는 편이 최소권한에 맞다.
   HasEcrRepository: !Not [!Equals [!Ref EcrRepositoryArn, ""]]
+  # 프라이빗 서브넷 모드. NAT Gateway 와 프라이빗 서브넷을 만든다.
+  UsePrivateSubnets: !Equals [!Ref TaskSubnetMode, "private-nat"]
 
 Resources:
   # -------------------------------------------------------------------------
@@ -355,6 +391,90 @@ Resources:
   # 게이트웨이 엔드포인트는 시간당 과금이 없다. DynamoDB 트래픽과 ECR
   # 이미지 레이어(S3에 저장된다)가 인터넷을 거치지 않게 되어 지연과 데이터
   # 전송 비용이 함께 줄어든다.
+  # -------------------------------------------------------------------------
+  # 프라이빗 서브넷 경로 (TaskSubnetMode = private-nat 일 때만 만든다)
+  #
+  # 태스크에 공인 IP 를 붙이지 않으려면 아웃바운드 경로가 따로 필요하다.
+  # NAT Gateway 하나로 두 AZ 를 처리한다. AZ 마다 두면 가용성이 오르지만
+  # 비용이 두 배가 되고, 이 게이트웨이는 NAT 가 죽어도 기존 태스크의 진행
+  # 중인 요청만 영향받는다(ALB 인바운드는 NAT 를 타지 않는다).
+  # -------------------------------------------------------------------------
+
+  PrivateSubnet1:
+    Type: AWS::EC2::Subnet
+    Condition: UsePrivateSubnets
+    Properties:
+      VpcId: !Ref Vpc
+      CidrBlock: !Ref PrivateSubnet1Cidr
+      AvailabilityZone: !Select [0, !GetAZs ""]
+      Tags:
+        - Key: Name
+          Value: !Sub "${ProjectName}-${Environment}-private-1"
+
+  PrivateSubnet2:
+    Type: AWS::EC2::Subnet
+    Condition: UsePrivateSubnets
+    Properties:
+      VpcId: !Ref Vpc
+      CidrBlock: !Ref PrivateSubnet2Cidr
+      AvailabilityZone: !Select [1, !GetAZs ""]
+      Tags:
+        - Key: Name
+          Value: !Sub "${ProjectName}-${Environment}-private-2"
+
+  NatEip:
+    Type: AWS::EC2::EIP
+    Condition: UsePrivateSubnets
+    # IGW 가 붙기 전에 EIP 를 만들면 할당이 실패할 수 있다.
+    DependsOn: InternetGatewayAttachment
+    Properties:
+      Domain: vpc
+      Tags:
+        - Key: Name
+          Value: !Sub "${ProjectName}-${Environment}-nat"
+
+  NatGateway:
+    Type: AWS::EC2::NatGateway
+    Condition: UsePrivateSubnets
+    Properties:
+      AllocationId: !GetAtt NatEip.AllocationId
+      # NAT 는 퍼블릭 서브넷에 있어야 인터넷으로 나갈 수 있다.
+      SubnetId: !Ref PublicSubnet1
+      Tags:
+        - Key: Name
+          Value: !Sub "${ProjectName}-${Environment}-nat"
+
+  PrivateRouteTable:
+    Type: AWS::EC2::RouteTable
+    Condition: UsePrivateSubnets
+    Properties:
+      VpcId: !Ref Vpc
+      Tags:
+        - Key: Name
+          Value: !Sub "${ProjectName}-${Environment}-private-rt"
+
+  PrivateDefaultRoute:
+    Type: AWS::EC2::Route
+    Condition: UsePrivateSubnets
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NatGateway
+
+  PrivateSubnet1RouteAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Condition: UsePrivateSubnets
+    Properties:
+      SubnetId: !Ref PrivateSubnet1
+      RouteTableId: !Ref PrivateRouteTable
+
+  PrivateSubnet2RouteAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Condition: UsePrivateSubnets
+    Properties:
+      SubnetId: !Ref PrivateSubnet2
+      RouteTableId: !Ref PrivateRouteTable
+
   DynamoDbEndpoint:
     Type: AWS::EC2::VPCEndpoint
     Properties:
@@ -363,6 +483,9 @@ Resources:
       VpcEndpointType: Gateway
       RouteTableIds:
         - !Ref PublicRouteTable
+        # 프라이빗 모드에서도 게이트웨이 엔드포인트를 태워야 한다. 붙이지
+        # 않으면 DynamoDB·S3 트래픽이 NAT 를 지나 데이터 처리비가 붙는다.
+        - !If [UsePrivateSubnets, !Ref PrivateRouteTable, !Ref "AWS::NoValue"]
 
   S3Endpoint:
     Type: AWS::EC2::VPCEndpoint
@@ -372,6 +495,9 @@ Resources:
       VpcEndpointType: Gateway
       RouteTableIds:
         - !Ref PublicRouteTable
+        # 프라이빗 모드에서도 게이트웨이 엔드포인트를 태워야 한다. 붙이지
+        # 않으면 DynamoDB·S3 트래픽이 NAT 를 지나 데이터 처리비가 붙는다.
+        - !If [UsePrivateSubnets, !Ref PrivateRouteTable, !Ref "AWS::NoValue"]
 
   # -------------------------------------------------------------------------
   # 보안 그룹
@@ -1002,6 +1128,10 @@ Resources:
   Service:
     Type: AWS::ECS::Service
     # 리스너가 준비되기 전에 서비스를 만들면 타깃 등록이 실패한다.
+    # 프라이빗 모드에서 NAT 라우팅보다 태스크가 먼저 뜨면 이미지 pull 이
+    # 실패할 수 있다. 조건부 리소스는 DependsOn 에 넣을 수 없어(조건이
+    # 거짓이면 참조가 깨진다) 여기서 순서를 강제하지 않는다. 대신 ECS 가
+    # pull 실패를 재시도하고, 배포 서킷 브레이커가 최종 실패를 잡는다.
     DependsOn:
       - HttpListener
     Properties:
@@ -1024,12 +1154,16 @@ Resources:
           Rollback: true
       NetworkConfiguration:
         AwsvpcConfiguration:
-          # NAT 없이 ECR/Bedrock 에 나가기 위해 공인 IP 를 붙인다.
-          # 인바운드는 보안 그룹이 ALB 만 허용한다.
-          AssignPublicIp: ENABLED
-          Subnets:
-            - !Ref PublicSubnet1
-            - !Ref PublicSubnet2
+          # public 모드는 NAT 없이 ECR/Bedrock 에 나가기 위해 공인 IP 를
+          # 붙인다. 인바운드는 보안 그룹이 ALB 만 허용한다.
+          # private-nat 모드는 공인 IP 를 붙이지 않고 NAT 로 나간다.
+          AssignPublicIp: !If [UsePrivateSubnets, DISABLED, ENABLED]
+          Subnets: !If
+            - UsePrivateSubnets
+            - - !Ref PrivateSubnet1
+              - !Ref PrivateSubnet2
+            - - !Ref PublicSubnet1
+              - !Ref PublicSubnet2
           SecurityGroups:
             - !Ref TaskSecurityGroup
       LoadBalancers:

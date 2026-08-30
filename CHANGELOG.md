@@ -3,6 +3,36 @@
 형식은 [Keep a Changelog](https://keepachangelog.com/ko/1.1.0/) 를 따르고,
 버전은 [유의적 버전](https://semver.org/lang/ko/)을 쓴다.
 
+## [1.12.0] - 2026-08-30
+
+**태스크를 프라이빗 서브넷에 둘 수 있게 했다.** 태스크가 공인 IP 를 가진다는
+점이 보안 정책에 걸려 도입하지 못하는 조직이 있었다.
+
+### 추가
+
+- **`--task-subnet-mode private-nat`.** 프라이빗 서브넷 2개와 NAT Gateway 를
+  만들고 태스크의 `AssignPublicIp` 를 `DISABLED` 로 둔다. 기본값 `public` 은
+  기존과 같아 추가 비용이 없다.
+  - 게이트웨이 VPC 엔드포인트(DynamoDB·S3)를 프라이빗 라우트 테이블에도
+    연결했다. 연결하지 않으면 이 트래픽이 NAT 를 지나 데이터 처리비가 붙는다.
+  - NAT Gateway 는 한 개만 만든다. AZ 마다 두면 비용이 두 배가 되고, ALB
+    인바운드는 NAT 를 타지 않으므로 영향이 태스크 아웃바운드에 한정된다.
+  - **인터페이스 VPC 엔드포인트 방식은 넣지 않았다.** 필요한 5종
+    (`bedrock-runtime`, `ecr.api`, `ecr.dkr`, `secretsmanager`, `logs`)을 2개 AZ 에
+    두면 월 약 73 USD 로 NAT(약 33 USD)보다 비싸다. 산정 근거를 README 에 적었다.
+- **이미지 provenance 검증 절차.** `gh attestation verify` 로 받은 이미지가 이
+  리포지토리의 CI 에서 나왔는지 확인하는 방법을 문서화했다. 다이제스트 고정
+  배포 예시도 함께 넣었다.
+
+### 수정
+
+- **`EcrRepositoryArn` 을 빈 값으로도 반드시 전달한다.** 전달하지 않으면
+  CloudFormation 이 기존 값을 유지하므로, private ECR 로 배포했던 스택을 공개
+  이미지로 옮길 때 태스크 실행 역할에 ECR pull 권한이 남았다. 배포된 환경에서
+  실측으로 확인하고 고쳤다. 수정 후 정책이
+  `WriteOwnLogGroup`·`ReadAdminTokenSecret` 2개로 줄어드는 것과, ECR 권한 없이도
+  GHCR 익명 pull 로 태스크가 정상 기동하는 것을 확인했다.
+
 ## [1.11.0] - 2026-08-29
 
 **BYOC(고객 자기 계정 배포)를 1차 배포 모델로 확정하고, Docker 없이 설치할 수
