@@ -588,7 +588,7 @@ if aws_cli ecs wait services-stable \
     --cluster "${CLUSTER_NAME}" --services "${SERVICE_NAME}" 2>/dev/null; then
     rollout="$(aws_cli ecs describe-services \
         --cluster "${CLUSTER_NAME}" --services "${SERVICE_NAME}" \
-        --query 'services[0].deployments[?status==`PRIMARY`].rolloutState' \
+        --query "services[0].deployments[?status=='PRIMARY'].rolloutState" \
         --output text 2>/dev/null || echo "UNKNOWN")"
     running_image="$(aws_cli ecs describe-task-definition \
         --task-definition "${SERVICE_NAME}" \
