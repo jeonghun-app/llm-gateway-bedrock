@@ -1427,15 +1427,19 @@ code {
 }
 
 .guardrail-on {
-  border-color: var(--success-300, var(--border));
-  background: var(--success-50, var(--surface-subtle));
-  color: var(--success-700, var(--text));
+  border-color: var(--green-100);
+  background: var(--green-100);
+  color: var(--green-800);
 }
 
+/* 기준선이 없다는 것은 통제가 없다는 뜻이다. 배지와 같은 붉은 계열을 써서
+   화면에서 즉시 눈에 띄게 한다. 존재하지 않는 토큰을 쓰면 중립 색으로
+   폴백해 경고가 경고로 보이지 않는다. */
 .guardrail-off {
-  border-color: var(--danger-300, var(--border));
-  background: var(--danger-50, var(--surface-subtle));
-  color: var(--danger-700, var(--text));
+  border-color: var(--red-100);
+  background: var(--red-100);
+  color: var(--red-800);
+  font-weight: 600;
 }
 
 .manage-subsection {
