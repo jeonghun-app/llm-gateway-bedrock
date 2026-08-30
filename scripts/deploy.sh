@@ -53,6 +53,9 @@ USAGE_TTL_DAYS=""
 ALLOWED_BEDROCK_MODEL_ARN=""
 # 단가 표에 없는 모델 처리 방식: allow | reject | hide
 UNPRICED_MODEL_POLICY=""
+# 이미 있는 이미지를 쓸 때 지정한다. 지정하면 ECR 스택 생성과 로컬 빌드를
+# 건너뛴다. Docker 를 쓸 수 없는 환경에서 설치하는 경로다.
+PREBUILT_IMAGE=""
 ALARM_EMAIL=""
 RUN_SEED="yes"
 RUN_SMOKE="yes"
@@ -101,6 +104,14 @@ usage() {
                             단가 표에 없는 모델 처리 (allow|reject|hide).
                             기본 allow. reject 는 비용 귀속을 보장하고,
                             hide 는 /v1/models 에서 감춘다.
+  --image <URI>             이미 있는 이미지로 배포한다. ECR 스택 생성과
+                            로컬 Docker 빌드를 건너뛴다. Docker 를 쓸 수 없는
+                            환경에서 쓴다. 예:
+                              --image ghcr.io/jeonghun-app/llm-gateway-bedrock:v1.10.0
+                            프로덕션에서는 이 이미지를 계정 내 private ECR 로
+                            복사한 뒤 그 URI 를 지정하기를 권한다. Fargate 는
+                            태스크마다 이미지를 새로 받으므로 외부 레지스트리
+                            장애가 스케일아웃을 막는다.
   --alarm-email <메일>      알람 수신 이메일
   --no-seed                 데모 데이터 시드를 건너뛴다
   --no-smoke                스모크 테스트를 건너뛴다
@@ -142,6 +153,7 @@ while [[ $# -gt 0 ]]; do
         --usage-ttl-days)   USAGE_TTL_DAYS="${2:-}"; shift 2 ;;
         --allowed-model-arn) ALLOWED_BEDROCK_MODEL_ARN="${2:-}"; shift 2 ;;
         --unpriced-model-policy) UNPRICED_MODEL_POLICY="${2:-}"; shift 2 ;;
+        --image)            PREBUILT_IMAGE="${2:-}"; shift 2 ;;
         --alarm-email)      ALARM_EMAIL="${2:-}"; shift 2 ;;
         --no-seed)          RUN_SEED="no"; shift ;;
         --no-smoke)         RUN_SMOKE="no"; shift ;;
@@ -186,14 +198,19 @@ fi
 command -v aws >/dev/null 2>&1 || die "aws CLI 가 필요하다."
 command -v jq  >/dev/null 2>&1 || die "jq 가 필요하다."
 
+# 사전 빌드 이미지를 쓰면 로컬 빌드가 없으므로 docker 를 요구하지 않는다.
+# 기업에서 개발자 PC 의 이미지 빌드를 막는 경우가 많아 이 경로가 필요하다.
+if [[ -n "${PREBUILT_IMAGE}" ]]; then
+    info "사전 빌드 이미지를 사용한다. docker 검사와 빌드를 건너뛴다."
+    DOCKER_CMD="skip"
 # docker 그룹이 현재 셸에 반영되지 않은 상태를 흔하게 만난다. sg 로 우회한다.
-if docker info >/dev/null 2>&1; then
+elif docker info >/dev/null 2>&1; then
     DOCKER_CMD="docker"
 elif command -v sg >/dev/null 2>&1 && sg docker -c "docker info" >/dev/null 2>&1; then
     DOCKER_CMD="sg_docker"
     info "docker 그룹이 현재 셸에 반영되지 않아 sg 로 실행한다."
 else
-    die "docker 데몬에 접근할 수 없다. 'sudo systemctl start docker' 와 'sudo usermod -aG docker \$USER' 를 확인한다."
+    die "docker 데몬에 접근할 수 없다. 'sudo systemctl start docker' 와 'sudo usermod -aG docker \$USER' 를 확인한다. 또는 --image 로 사전 빌드 이미지를 지정한다."
 fi
 
 # docker 를 직접 실행하거나 sg 로 감싸 실행한다. 인자를 배열로 받아
@@ -249,67 +266,77 @@ fi
 # ---------------------------------------------------------------------------
 # 2. ECR 스택
 # ---------------------------------------------------------------------------
-log "2/7 ECR 스택 배포"
-aws_cli cloudformation deploy \
-    --stack-name "${ECR_STACK}" \
-    --template-file "${REPO_ROOT}/infra/ecr.yaml" \
-    --no-fail-on-empty-changeset \
-    --parameter-overrides \
-        "ProjectName=${PROJECT_NAME}" \
-        "Environment=${ENVIRONMENT}" \
-        "Owner=${OWNER}" \
-    --tags \
-        "Project=${PROJECT_NAME}" \
-        "Environment=${ENVIRONMENT}" \
-        "Owner=${OWNER}" \
-        "ManagedBy=cloudformation" \
-    >/dev/null
+if [[ -n "${PREBUILT_IMAGE}" ]]; then
+    log "2-3/7 ECR 스택과 이미지 빌드 건너뜀"
+    IMAGE_URI="${PREBUILT_IMAGE}"
+    # 사전 빌드 이미지는 우리 계정 밖(GHCR 등)에 있을 수 있다. 그 경우 태스크
+    # 실행 역할에 ECR pull 권한을 주지 않는다. 공개 레지스트리는 익명 pull 이라
+    # 권한이 필요 없고, 주지 않는 편이 최소권한에 맞다.
+    REPOSITORY_ARN=""
+    info "이미지 ${IMAGE_URI}"
+else
+    log "2/7 ECR 스택 배포"
+    aws_cli cloudformation deploy \
+        --stack-name "${ECR_STACK}" \
+        --template-file "${REPO_ROOT}/infra/ecr.yaml" \
+        --no-fail-on-empty-changeset \
+        --parameter-overrides \
+            "ProjectName=${PROJECT_NAME}" \
+            "Environment=${ENVIRONMENT}" \
+            "Owner=${OWNER}" \
+        --tags \
+            "Project=${PROJECT_NAME}" \
+            "Environment=${ENVIRONMENT}" \
+            "Owner=${OWNER}" \
+            "ManagedBy=cloudformation" \
+        >/dev/null
 
-stack_output() {
-    aws_cli cloudformation describe-stacks --stack-name "$1" \
-        --query "Stacks[0].Outputs[?OutputKey=='$2'].OutputValue" \
-        --output text
-}
+    stack_output() {
+        aws_cli cloudformation describe-stacks --stack-name "$1" \
+            --query "Stacks[0].Outputs[?OutputKey=='$2'].OutputValue" \
+            --output text
+    }
 
-REPOSITORY_URI="$(stack_output "${ECR_STACK}" RepositoryUri)"
-REPOSITORY_ARN="$(stack_output "${ECR_STACK}" RepositoryArn)"
-REPOSITORY_NAME="$(stack_output "${ECR_STACK}" RepositoryName)"
-info "리포지토리 ${REPOSITORY_URI}"
+    REPOSITORY_URI="$(stack_output "${ECR_STACK}" RepositoryUri)"
+    REPOSITORY_ARN="$(stack_output "${ECR_STACK}" RepositoryArn)"
+    REPOSITORY_NAME="$(stack_output "${ECR_STACK}" RepositoryName)"
+    info "리포지토리 ${REPOSITORY_URI}"
 
-# ---------------------------------------------------------------------------
-# 3. 이미지 빌드와 푸시
-# ---------------------------------------------------------------------------
-log "3/7 이미지 빌드와 푸시"
+    # ---------------------------------------------------------------------------
+    # 3. 이미지 빌드와 푸시
+    # ---------------------------------------------------------------------------
+    log "3/7 이미지 빌드와 푸시"
 
-# ECR 태그를 불변으로 설정했으므로 태그가 유일해야 한다. 작업 트리가
-# 깨끗하면 커밋 SHA 를 그대로 쓴다. 그러면 같은 커밋 재배포 시 푸시를
-# 건너뛸 수 있다. 수정 사항이 있으면 타임스탬프를 붙여 유일성을 보장한다.
-# 그러지 않으면 변경된 소스가 이전 이미지로 배포되는 사고가 난다.
-cd "${REPO_ROOT}"
-if git rev-parse --git-dir >/dev/null 2>&1; then
-    git_sha="$(git rev-parse --short=12 HEAD 2>/dev/null || echo nogit)"
-    if [[ -n "$(git status --porcelain 2>/dev/null)" ]]; then
-        IMAGE_TAG="${git_sha}-dirty-$(date -u +%Y%m%d%H%M%S)"
-        warn "작업 트리에 커밋되지 않은 변경이 있다. 태그에 타임스탬프를 붙인다."
+    # ECR 태그를 불변으로 설정했으므로 태그가 유일해야 한다. 작업 트리가
+    # 깨끗하면 커밋 SHA 를 그대로 쓴다. 그러면 같은 커밋 재배포 시 푸시를
+    # 건너뛸 수 있다. 수정 사항이 있으면 타임스탬프를 붙여 유일성을 보장한다.
+    # 그러지 않으면 변경된 소스가 이전 이미지로 배포되는 사고가 난다.
+    cd "${REPO_ROOT}"
+    if git rev-parse --git-dir >/dev/null 2>&1; then
+        git_sha="$(git rev-parse --short=12 HEAD 2>/dev/null || echo nogit)"
+        if [[ -n "$(git status --porcelain 2>/dev/null)" ]]; then
+            IMAGE_TAG="${git_sha}-dirty-$(date -u +%Y%m%d%H%M%S)"
+            warn "작업 트리에 커밋되지 않은 변경이 있다. 태그에 타임스탬프를 붙인다."
+        else
+            IMAGE_TAG="${git_sha}"
+        fi
     else
-        IMAGE_TAG="${git_sha}"
+        IMAGE_TAG="notgit-$(date -u +%Y%m%d%H%M%S)"
     fi
-else
-    IMAGE_TAG="notgit-$(date -u +%Y%m%d%H%M%S)"
-fi
-IMAGE_URI="${REPOSITORY_URI}:${IMAGE_TAG}"
-info "태그 ${IMAGE_TAG}"
+    IMAGE_URI="${REPOSITORY_URI}:${IMAGE_TAG}"
+    info "태그 ${IMAGE_TAG}"
 
-if aws_cli ecr describe-images --repository-name "${REPOSITORY_NAME}" \
-    --image-ids "imageTag=${IMAGE_TAG}" >/dev/null 2>&1; then
-    info "같은 태그의 이미지가 이미 있다. 빌드와 푸시를 건너뛴다."
-else
-    docker_run build -t "${IMAGE_URI}" "${REPO_ROOT}"
-    aws_cli ecr get-login-password \
-        | docker_run login --username AWS --password-stdin \
-            "${REPOSITORY_URI%%/*}" >/dev/null
-    docker_run push "${IMAGE_URI}" >/dev/null
-    info "푸시 완료"
+    if aws_cli ecr describe-images --repository-name "${REPOSITORY_NAME}" \
+        --image-ids "imageTag=${IMAGE_TAG}" >/dev/null 2>&1; then
+        info "같은 태그의 이미지가 이미 있다. 빌드와 푸시를 건너뛴다."
+    else
+        docker_run build -t "${IMAGE_URI}" "${REPO_ROOT}"
+        aws_cli ecr get-login-password \
+            | docker_run login --username AWS --password-stdin \
+                "${REPOSITORY_URI%%/*}" >/dev/null
+        docker_run push "${IMAGE_URI}" >/dev/null
+        info "푸시 완료"
+    fi
 fi
 
 # ---------------------------------------------------------------------------
@@ -329,6 +356,8 @@ optional_overrides=()
     && optional_overrides+=("AllowedBedrockModelArn=${ALLOWED_BEDROCK_MODEL_ARN}")
 [[ -n "${UNPRICED_MODEL_POLICY}" ]] \
     && optional_overrides+=("UnpricedModelPolicy=${UNPRICED_MODEL_POLICY}")
+[[ -n "${REPOSITORY_ARN}" ]] \
+    && optional_overrides+=("EcrRepositoryArn=${REPOSITORY_ARN}")
 
 aws_cli cloudformation deploy \
     --stack-name "${APP_STACK}" \
@@ -340,7 +369,6 @@ aws_cli cloudformation deploy \
         "Environment=${ENVIRONMENT}" \
         "Owner=${OWNER}" \
         "ImageUri=${IMAGE_URI}" \
-        "EcrRepositoryArn=${REPOSITORY_ARN}" \
         "AccessListMaxEntries=${ACCESS_MAX_ENTRIES}" \
         "CertificateArn=${CERTIFICATE_ARN}" \
         "DesiredCount=${DESIRED_COUNT}" \

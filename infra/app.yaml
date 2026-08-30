@@ -65,16 +65,33 @@ Parameters:
   ImageUri:
     Type: String
     MinLength: 1
+    Default: ghcr.io/jeonghun-app/llm-gateway-bedrock:v1.11.0
     Description: >-
       ECS 가 실행할 컨테이너 이미지 URI. 태그를 포함한다.
+
+      기본값은 GitHub Container Registry 의 공개 이미지다. 이 값이면 로컬에
+      Docker 없이 콘솔에서만 배포할 수 있다. 레지스트리 위치는 배포 리전과
+      무관하며, 프롬프트와 사용량은 이 스택이 만드는 리소스 안에만 남는다.
+
+      프로덕션에서는 이 이미지를 계정 내 private ECR 로 복사한 뒤 그 URI 를
+      지정하기를 권한다. Fargate 는 태스크를 띄울 때마다 이미지를 새로
+      받으므로(호스트 캐시가 없다) 외부 레지스트리 장애가 스케일아웃과 복구를
+      막는다. 그때는 EcrRepositoryArn 도 함께 지정한다.
+
+      예: ghcr.io/jeonghun-app/llm-gateway-bedrock:v1.11.0
       예: 123456789012.dkr.ecr.us-east-1.amazonaws.com/llmgw-dev:abc1234
 
   EcrRepositoryArn:
     Type: String
-    MinLength: 1
+    Default: ""
     Description: >-
-      이미지를 가져올 ECR 리포지토리 ARN. 태스크 실행 역할 권한을 이
-      리포지토리로만 좁히는 데 쓴다. ecr 스택의 RepositoryArn 출력값.
+      이미지를 가져올 private ECR 리포지토리 ARN (선택). 태스크 실행 역할의
+      pull 권한을 이 리포지토리로만 좁히는 데 쓴다. ecr 스택의
+      RepositoryArn 출력값.
+
+      비우면 ECR pull 권한을 부여하지 않는다. GHCR 같은 공개 레지스트리는
+      익명 pull 이므로 IAM 권한이 필요 없고, 권한을 주지 않는 편이 최소권한에
+      맞다. private ECR 을 쓸 때만 지정한다.
 
   AccessListMaxEntries:
     Type: Number
@@ -213,6 +230,9 @@ Conditions:
   HasCertificate: !Not [!Equals [!Ref CertificateArn, ""]]
   HasAlarmEmail: !Not [!Equals [!Ref AlarmEmail, ""]]
   HasBedrockRegion: !Not [!Equals [!Ref BedrockRegion, ""]]
+  # private ECR 을 쓸 때만 pull 권한을 붙인다. 공개 레지스트리는 익명 pull 이라
+  # 권한이 필요 없고, 주지 않는 편이 최소권한에 맞다.
+  HasEcrRepository: !Not [!Equals [!Ref EcrRepositoryArn, ""]]
 
 Resources:
   # -------------------------------------------------------------------------
@@ -662,19 +682,27 @@ Resources:
           PolicyDocument:
             Version: "2012-10-17"
             Statement:
-              - Sid: EcrAuthToken
-                Effect: Allow
-                # ecr:GetAuthorizationToken 은 리소스 단위 제한을 지원하지
-                # 않는다. AWS 서비스 제약이라 좁힐 수 없다.
-                Action: ecr:GetAuthorizationToken
-                Resource: "*"
-              - Sid: EcrPullThisRepositoryOnly
-                Effect: Allow
-                Action:
-                  - ecr:BatchCheckLayerAvailability
-                  - ecr:GetDownloadUrlForLayer
-                  - ecr:BatchGetImage
-                Resource: !Ref EcrRepositoryArn
+              # ECR 관련 권한은 private ECR 을 쓸 때만 붙인다. 공개
+              # 레지스트리(GHCR 등)는 익명 pull 이라 권한이 필요 없다.
+              - !If
+                - HasEcrRepository
+                - Sid: EcrAuthToken
+                  Effect: Allow
+                  # ecr:GetAuthorizationToken 은 리소스 단위 제한을 지원하지
+                  # 않는다. AWS 서비스 제약이라 좁힐 수 없다.
+                  Action: ecr:GetAuthorizationToken
+                  Resource: "*"
+                - !Ref AWS::NoValue
+              - !If
+                - HasEcrRepository
+                - Sid: EcrPullThisRepositoryOnly
+                  Effect: Allow
+                  Action:
+                    - ecr:BatchCheckLayerAvailability
+                    - ecr:GetDownloadUrlForLayer
+                    - ecr:BatchGetImage
+                  Resource: !Ref EcrRepositoryArn
+                - !Ref AWS::NoValue
               - Sid: WriteOwnLogGroup
                 Effect: Allow
                 Action:
