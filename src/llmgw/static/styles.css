@@ -892,6 +892,55 @@ th {
   border-bottom: 1px solid var(--border);
 }
 
+/* 정렬 조작은 th 안의 네이티브 button 이다. 패딩을 버튼이 가져가 클릭·포커스
+   영역이 헤더 칸 전체와 같아진다. th 에 패딩이 남아 있으면 버튼 바깥의
+   여백이 눌리지 않아 오작동으로 느껴진다. */
+th:has(.sort-button) {
+  padding: 0;
+}
+
+.sort-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  width: 100%;
+  padding: 0.75rem 1rem;
+  border: 0;
+  background: none;
+  /* th 의 타이포그래피를 그대로 물려받아 버튼처럼 보이지 않게 한다. */
+  font: inherit;
+  color: inherit;
+  letter-spacing: inherit;
+  text-transform: inherit;
+  text-align: inherit;
+  cursor: pointer;
+}
+
+th.numeric .sort-button {
+  /* 숫자 열은 오른쪽 정렬이므로 라벨과 화살표도 오른쪽에 붙인다. */
+  justify-content: flex-end;
+}
+
+.sort-button:hover {
+  background: var(--surface-subtle);
+  color: var(--text);
+}
+
+/* 정렬 중이 아닐 때의 양방향 화살표는 힌트라 흐리게 둔다. 정렬 중인 열은
+   aria-sort 가 붙고 화살표도 진해져 시각·비시각 양쪽에 상태가 전달된다. */
+.sort-arrow {
+  opacity: 0.45;
+  font-size: 0.7rem;
+}
+
+[aria-sort] .sort-arrow {
+  opacity: 1;
+}
+
+[aria-sort] {
+  color: var(--text);
+}
+
 td {
   padding: 0.75rem 1rem;
   border-bottom: 1px solid var(--border);

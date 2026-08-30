@@ -1,6 +1,6 @@
 [project]
 name = "llmgw"
-version = "1.14.0"
+version = "1.15.0"
 description = "Amazon Bedrock 앞단의 OpenAI 호환 LLM Gateway"
 requires-python = ">=3.13"
 readme = "README.md"
