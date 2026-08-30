@@ -128,9 +128,13 @@ if [[ "${PURGE_DATA}" == "yes" ]]; then
     if aws_cli s3api head-bucket --bucket "${bucket}" >/dev/null 2>&1; then
         # 객체가 남아 있으면 버킷 삭제가 실패한다.
         aws_cli s3 rm "s3://${bucket}" --recursive >/dev/null 2>&1 || true
-        aws_cli s3api delete-bucket --bucket "${bucket}" >/dev/null 2>&1 \
-            && info "${bucket} 삭제" \
-            || info "${bucket} 삭제 실패 (수동 확인 필요)"
+        # A && B || C 는 if-then-else 가 아니다. B 가 실패하면 C 도 돈다.
+        if aws_cli s3api delete-bucket --bucket "${bucket}" >/dev/null 2>&1
+        then
+            info "${bucket} 삭제"
+        else
+            info "${bucket} 삭제 실패 (수동 확인 필요)"
+        fi
     fi
 
     log "잔여 시크릿 확인"
