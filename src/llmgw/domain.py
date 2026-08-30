@@ -389,6 +389,25 @@ class Principal(_Base):
     rpm_limit: int | None = None
     rate_scope: str = ""
 
+    @property
+    def has_monetary_budget(self) -> bool:
+        """네 계층 중 하나라도 금액 예산이 설정돼 있으면 True.
+
+        단가를 모르는 모델은 비용이 0 으로 집계된다. 예산을 쓰지 않는 주체에게
+        그것은 보고 정확도 문제일 뿐이지만, 예산을 쓰는 주체에게는 예산이
+        영원히 걸리지 않는 통제 우회다. 같은 상황을 다르게 다뤄야 하므로
+        예산 보유 여부를 판정한다.
+        """
+        return any(
+            budget is not None
+            for budget in (
+                self.account_budget_usd,
+                self.team_budget_usd,
+                self.user_budget_usd,
+                self.key_budget_usd,
+            )
+        )
+
 
 class UsageRecord(_Base):
     """단일 게이트웨이 요청의 사용량 레코드.

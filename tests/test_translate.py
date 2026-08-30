@@ -357,3 +357,38 @@ def test_chat_completion_request_messages가비면검증실패() -> None:
     # Arrange / Act / Assert
     with pytest.raises(ValueError):  # noqa: PT011
         _request(messages=[])
+
+
+def test_컨텍스트초과는length로매핑된다() -> None:
+    """잘린 응답을 정상 완료로 보고하면 클라이언트가 잘린 답을 그대로 쓴다."""
+    assert (
+        translate.map_finish_reason("model_context_window_exceeded") == "length"
+    )
+
+
+def test_가드레일개입과콘텐츠필터는content_filter로매핑된다() -> None:
+    assert (
+        translate.map_finish_reason("guardrail_intervened") == "content_filter"
+    )
+    assert translate.map_finish_reason("content_filtered") == "content_filter"
+
+
+def test_sdk의모든stop_reason이의도적으로매핑된다() -> None:
+    """SDK 에 값이 추가되면 기본값으로 조용히 흘러가지 않도록 고정한다.
+
+    botocore 서비스 모델의 StopReason enum 전체를 나열한다. 새 값이 생기면
+    이 테스트가 아니라 SDK 갱신 시점에 알아채야 하므로, 여기서는 현재 알려진
+    값이 모두 명시적으로 매핑돼 있는지만 본다.
+    """
+    known = {
+        "end_turn",
+        "tool_use",
+        "max_tokens",
+        "stop_sequence",
+        "guardrail_intervened",
+        "content_filtered",
+        "malformed_model_output",
+        "malformed_tool_use",
+        "model_context_window_exceeded",
+    }
+    assert known <= set(translate._FINISH_REASONS)

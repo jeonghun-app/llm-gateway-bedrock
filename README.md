@@ -160,7 +160,7 @@ git clone <이 리포지토리>
 cd llm-gateway-bedrock
 
 ./scripts/deploy.sh --allowed-cidr "$(curl -s https://checkip.amazonaws.com)/32" \
-  --image ghcr.io/jeonghun-app/llm-gateway-bedrock:v1.15.0
+  --image ghcr.io/jeonghun-app/llm-gateway-bedrock:v1.16.0
 ```
 
 **데이터는 당신의 AWS 계정을 벗어나지 않는다.** 이미지를 GitHub Container
@@ -178,7 +178,7 @@ Registry 에서 받아오지만, 그것은 배포 리전과 무관하다. 게이
 
 ```bash
 gh attestation verify \
-  oci://ghcr.io/jeonghun-app/llm-gateway-bedrock:v1.15.0 \
+  oci://ghcr.io/jeonghun-app/llm-gateway-bedrock:v1.16.0 \
   --repo jeonghun-app/llm-gateway-bedrock
 ```
 
@@ -202,8 +202,8 @@ Fargate 는 태스크를 띄울 때마다 이미지를 새로 받는다(호스�
 ```bash
 # 한 번만: 공개 이미지를 계정 내 ECR 로 복사
 aws ecr create-repository --repository-name llmgw --region <리전>
-docker pull ghcr.io/jeonghun-app/llm-gateway-bedrock:v1.15.0
-docker tag ghcr.io/jeonghun-app/llm-gateway-bedrock:v1.15.0 \
+docker pull ghcr.io/jeonghun-app/llm-gateway-bedrock:v1.16.0
+docker tag ghcr.io/jeonghun-app/llm-gateway-bedrock:v1.16.0 \
   <계정ID>.dkr.ecr.<리전>.amazonaws.com/llmgw:v1.10.0
 aws ecr get-login-password --region <리전> \
   | docker login --username AWS --password-stdin <계정ID>.dkr.ecr.<리전>.amazonaws.com
@@ -684,7 +684,7 @@ LLMGW_BASE_URL="$GATEWAY_URL" LLMGW_ADMIN_TOKEN="$ADMIN_TOKEN" \
 | `LLMGW_USAGE_AGG_TABLE` | 아니오 | `llmgw-dev-usage-agg` | 집계 테이블 |
 | `LLMGW_ADMIN_TOKEN` | **예** | (빈 값) | 관리 API·대시보드 토큰. 비면 관리 API가 503 |
 | `LLMGW_DEFAULT_ALLOWED_MODELS` | 아니오 | (빈 값) | 키에 허용 목록이 없을 때 적용. 쉼표 구분. 비면 전체 허용 |
-| `LLMGW_UNPRICED_MODEL_POLICY` | 아니오 | `allow` | 단가 표에 없는 모델 처리. `allow`(통과·비용 0) / `reject`(거부) / `hide`(목록에서 감춤) |
+| `LLMGW_UNPRICED_MODEL_POLICY` | 아니오 | `allow` | 단가 표에 없는 모델 처리. `allow`(통과·비용 0, 단 예산이 걸린 주체는 거부) / `reject`(항상 거부) / `hide`(목록에서 감춤) |
 | `LLMGW_REQUEST_FILTERS` | 아니오 | (빈 값) | 활성화할 요청 필터 확장. `module:Class` 쉼표 구분. 적은 순서가 적용 순서 |
 | `LLMGW_EXTENSION_TIMEOUT_SECONDS` | 아니오 | `1.0` | 확장 하나의 제한 시간 |
 | `LLMGW_USAGE_TTL_DAYS` | 아니오 | `90` | usage 원본 보존 기간 |
@@ -807,6 +807,8 @@ CloudWatch 커스텀 네임스페이스 `LLMGateway`:
 |---|---|
 | `/healthz` 에 연결되지 않음 | 이 단말이 허용 목록에 없다. `./scripts/manage_access.sh check` 로 확인하고 `add-me` 로 추가한다 (재배포 불필요) |
 | `503 storage_unavailable` | DynamoDB 테이블이 없거나 태스크 역할 권한 부족. 응답 메시지의 AWS 코드를 확인 |
+| `400 invalid_request` + "단가가 등록되지 않아" | 단가 없는 모델인데 예산이 걸려 있다. 비용이 0 으로 집계되면 예산이 무효가 되므로 막는다. 단가를 등록하거나 예산을 해제한다 |
+| `400 invalid_request` + "지원하지 않는 메시지 본문" | 이미지 등 텍스트가 아닌 조각을 보냈다. 게이트웨이는 텍스트만 전달하며, 조용히 버리지 않고 거부한다 |
 | `403 model_not_allowed` | 키의 `allowed_models` 에 없는 모델. `GET /v1/models` 로 사용 가능 목록 확인 |
 | `403` + "Bedrock 모델 액세스" | 콘솔 Bedrock → Model access 에서 모델 활성화 |
 | `429 insufficient_quota` | 계정/팀/사용자/키 중 하나가 월 예산 초과. 대시보드에서 어느 축인지 확인 |

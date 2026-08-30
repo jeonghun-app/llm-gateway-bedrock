@@ -33,6 +33,17 @@ _FINISH_REASONS = {
     "tool_use": "tool_calls",
     "content_filtered": "content_filter",
     "guardrail_intervened": "content_filter",
+    # 컨텍스트 창을 넘겨 잘린 응답이다. OpenAI 의미로는 length 다. 기본값인
+    # stop 으로 두면 클라이언트가 정상 완료로 읽어 잘린 답을 그대로 쓴다.
+    "model_context_window_exceeded": "length",
+    # 모델이 형식을 어긴 출력을 냈다. OpenAI 스펙에 대응하는 값이 없다.
+    # stop 은 "정상적으로 끝났다" 는 뜻이라 정확하지 않지만, length 나
+    # content_filter 는 더 틀리다. 명시적으로 적어 두는 이유는 이 값이
+    # 기본값으로 흘러들어간 것이 아니라 검토한 결과임을 남기기 위해서다.
+    # 클라이언트가 구분할 수 없으므로 운영자는 로그와 사용량 레코드의
+    # stop_reason 으로 봐야 한다.
+    "malformed_model_output": "stop",
+    "malformed_tool_use": "stop",
 }
 
 _DEFAULT_FINISH_REASON = "stop"
