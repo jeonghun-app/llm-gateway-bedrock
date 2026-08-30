@@ -113,9 +113,16 @@ if [[ -z "${API_KEY}" ]]; then
         -H 'Content-Type: application/json' \
         -d "{\"account_id\":\"${TEMP_ACCOUNT}\",\"name\":\"Smoke Test\"}" \
         "${BASE_URL}/admin/accounts"
+    # 팀을 만들고 사용자를 여기에 넣는다. 팀 없이 만들면 team 축 집계가 비어
+    # 아래 집계 검사가 구조적으로 통과할 수 없다. 팀별 비용 귀속이 이
+    # 게이트웨이의 핵심 기능이라 검사를 지우는 대신 팀을 만든다.
     curl -s -o /dev/null -X POST -H "X-Admin-Token: ${ADMIN_TOKEN}" \
         -H 'Content-Type: application/json' \
-        -d '{"user_id":"smoke","name":"Smoke User"}' \
+        -d '{"team_id":"smoke-team","name":"Smoke Team"}' \
+        "${BASE_URL}/admin/accounts/${TEMP_ACCOUNT}/teams"
+    curl -s -o /dev/null -X POST -H "X-Admin-Token: ${ADMIN_TOKEN}" \
+        -H 'Content-Type: application/json' \
+        -d '{"user_id":"smoke","name":"Smoke User","team_id":"smoke-team"}' \
         "${BASE_URL}/admin/accounts/${TEMP_ACCOUNT}/users"
     key_json="$(curl -s -X POST -H "X-Admin-Token: ${ADMIN_TOKEN}" \
         -H 'Content-Type: application/json' \
