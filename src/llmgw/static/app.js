@@ -568,6 +568,21 @@
       },
       { key: 'cost_usd', title: t('비용'), numeric: true, format: formatUsd },
       {
+        // 가드레일 상태를 한 열로 합친다. 세 상태가 있고 서로 다른 의미다.
+        // 개입: 차단됐다 / 적용: 검사했고 통과했다 / 미적용: 검사하지 않았다.
+        key: 'guardrail_intervened',
+        title: t('가드레일'),
+        numeric: false,
+        format: function (value, row) {
+          if (value === true) {
+            return t('개입');
+          }
+          return row && row.guardrail_applied === true
+            ? t('적용')
+            : t('미적용');
+        },
+      },
+      {
         key: 'latency_ms',
         title: t('지연'),
         numeric: true,
@@ -760,7 +775,7 @@
           badge.textContent = String(raw);
           cell.appendChild(badge);
         } else if (column.format) {
-          cell.textContent = column.format(raw);
+          cell.textContent = column.format(raw, row);
         } else {
           cell.textContent =
             raw === undefined || raw === null || raw === '' ? '-' : String(raw);

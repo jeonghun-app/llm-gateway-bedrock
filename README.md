@@ -161,7 +161,7 @@ git clone <이 리포지토리>
 cd llm-gateway-bedrock
 
 ./scripts/deploy.sh --allowed-cidr "$(curl -s https://checkip.amazonaws.com)/32" \
-  --image ghcr.io/jeonghun-app/llm-gateway-bedrock:v2.0.1
+  --image ghcr.io/jeonghun-app/llm-gateway-bedrock:v2.1.0
 ```
 
 **데이터는 당신의 AWS 계정을 벗어나지 않는다.** 이미지를 GitHub Container
@@ -179,7 +179,7 @@ Registry 에서 받아오지만, 그것은 배포 리전과 무관하다. 게이
 
 ```bash
 gh attestation verify \
-  oci://ghcr.io/jeonghun-app/llm-gateway-bedrock:v2.0.1 \
+  oci://ghcr.io/jeonghun-app/llm-gateway-bedrock:v2.1.0 \
   --repo jeonghun-app/llm-gateway-bedrock
 ```
 
@@ -203,8 +203,8 @@ Fargate 는 태스크를 띄울 때마다 이미지를 새로 받는다(호스�
 ```bash
 # 한 번만: 공개 이미지를 계정 내 ECR 로 복사
 aws ecr create-repository --repository-name llmgw --region <리전>
-docker pull ghcr.io/jeonghun-app/llm-gateway-bedrock:v2.0.1
-docker tag ghcr.io/jeonghun-app/llm-gateway-bedrock:v2.0.1 \
+docker pull ghcr.io/jeonghun-app/llm-gateway-bedrock:v2.1.0
+docker tag ghcr.io/jeonghun-app/llm-gateway-bedrock:v2.1.0 \
   <계정ID>.dkr.ecr.<리전>.amazonaws.com/llmgw:v1.10.0
 aws ecr get-login-password --region <리전> \
   | docker login --username AWS --password-stdin <계정ID>.dkr.ecr.<리전>.amazonaws.com
@@ -510,6 +510,9 @@ OpenAI 스펙 중 Bedrock Converse 에 대응이 없는 필드(`presence_penalty
 
 ![한국어 대시보드](docs/images/dashboard-ko.png)
 
+관리 화면에서 계정·팀·사용자·API 키를 만들고 수정하며, 외부 인증(OIDC)과
+가드레일 기준선·면제도 여기서 다룬다. API 로만 되던 것을 UI 로 옮겼다.
+
 화면 언어는 사이드바에서 한국어와 영어를 전환한다. 선택은 브라우저에
 저장되어 다음 방문에도 유지된다. 영어 화면은
 [English README](README.en.md#monitoring-dashboard) 에 있다.
@@ -522,6 +525,7 @@ OpenAI 스펙 중 Bedrock Converse 에 대응이 없는 필드(`presence_penalty
 - **사용자별 비용** 상위 10 막대 그래프
 - **모델별 요청 비중** 도넛 차트
 - **상세 표 6개 탭** — 계정 / 팀 / 사용자 / 모델 / API 키 / 최근 요청
+- **최근 요청의 가드레일 상태** — 개입 / 적용 / 미적용
 
 기간 프리셋(오늘/7일/30일/90일)과 임의 구간 조회, 30초 자동 새로고침을
 지원한다. 조회 범위 상한은 93일이다.
