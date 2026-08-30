@@ -54,6 +54,11 @@ jobs:
       - name: 타입 체크 (mypy)
         run: mypy
 
+      - name: 릴리스 아티팩트 버전 일치
+        # 코드 버전만 올리고 템플릿·문서를 잊는 실수를 막는다. v1.13.1 에서
+        # ImageUri 기본값이 v1.11.0 으로 남아 신규 설치자가 구버전을 받았다.
+        run: python scripts/check_release_consistency.py
+
       - name: 유닛 테스트
         run: |
           pytest -m "not browser" \
