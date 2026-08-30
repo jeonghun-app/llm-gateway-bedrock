@@ -160,7 +160,7 @@ git clone <이 리포지토리>
 cd llm-gateway-bedrock
 
 ./scripts/deploy.sh --allowed-cidr "$(curl -s https://checkip.amazonaws.com)/32" \
-  --image ghcr.io/jeonghun-app/llm-gateway-bedrock:v1.13.2
+  --image ghcr.io/jeonghun-app/llm-gateway-bedrock:v1.14.0
 ```
 
 **데이터는 당신의 AWS 계정을 벗어나지 않는다.** 이미지를 GitHub Container
@@ -178,7 +178,7 @@ Registry 에서 받아오지만, 그것은 배포 리전과 무관하다. 게이
 
 ```bash
 gh attestation verify \
-  oci://ghcr.io/jeonghun-app/llm-gateway-bedrock:v1.13.2 \
+  oci://ghcr.io/jeonghun-app/llm-gateway-bedrock:v1.14.0 \
   --repo jeonghun-app/llm-gateway-bedrock
 ```
 
@@ -202,8 +202,8 @@ Fargate 는 태스크를 띄울 때마다 이미지를 새로 받는다(호스�
 ```bash
 # 한 번만: 공개 이미지를 계정 내 ECR 로 복사
 aws ecr create-repository --repository-name llmgw --region <리전>
-docker pull ghcr.io/jeonghun-app/llm-gateway-bedrock:v1.13.2
-docker tag ghcr.io/jeonghun-app/llm-gateway-bedrock:v1.13.2 \
+docker pull ghcr.io/jeonghun-app/llm-gateway-bedrock:v1.14.0
+docker tag ghcr.io/jeonghun-app/llm-gateway-bedrock:v1.14.0 \
   <계정ID>.dkr.ecr.<리전>.amazonaws.com/llmgw:v1.10.0
 aws ecr get-login-password --region <리전> \
   | docker login --username AWS --password-stdin <계정ID>.dkr.ecr.<리전>.amazonaws.com
@@ -416,7 +416,14 @@ curl -X POST "$GATEWAY_URL/admin/accounts/contoso/keys" \
 ```
 
 예산은 계정·팀·사용자·키 네 단계에 각각 걸 수 있고, **하나라도 초과하면**
-`429 insufficient_quota` 로 차단된다. 예산을 지정하지 않으면 무제한이고, 그
+`429 insufficient_quota` 로 차단된다.
+
+**정확한 상한은 아니다.** 검사는 요청을 받은 시점의 누적 비용을 읽는 것이고,
+이번 요청의 비용을 미리 예약하지 않는다. 응답 토큰 수는 호출 전에 알 수 없기
+때문이다. 따라서 남은 예산이 $0.01 일 때 그보다 비싼 요청 하나가 통과할 수
+있고, 동시에 도착한 여러 요청이 같은 누적값을 보고 함께 통과할 수 있다.
+예산은 "도달하면 이후 요청을 막는 장치" 이고, 초과폭을 줄이려면 RPM 제한을
+함께 쓴다. 예산을 지정하지 않으면 무제한이고, 그
 경우 예산 확인용 DynamoDB 조회도 발생하지 않는다.
 
 ### OpenAI SDK 로 호출
@@ -704,6 +711,7 @@ LLMGW_BASE_URL="$GATEWAY_URL" LLMGW_ADMIN_TOKEN="$ADMIN_TOKEN" \
 | `VpcCidr` | `10.60.0.0/16` | 새로 만들 VPC 대역 |
 | `LogRetentionDays` | `30` | 로그 보존. 무한 보존은 선택할 수 없다 |
 | `UsageTtlDays` | `90` | usage 원본 TTL |
+| `AccessLogRetentionDays` | `30` | ALB 접근 로그 보존. 소스 IP 가 남으므로 개인정보로 취급 |
 | `AllowedBedrockModelArn` | `arn:aws:bedrock:*::foundation-model/*` | 태스크 역할이 호출 가능한 모델 범위 |
 | `AlarmEmail` | 빈 값 | 알람 수신 메일. 확인 메일 승인 필요 |
 
@@ -722,7 +730,7 @@ LLMGW_BASE_URL="$GATEWAY_URL" LLMGW_ADMIN_TOKEN="$ADMIN_TOKEN" \
 | ECR | 저장 용량 | 이미지 몇 개 기준 약 $0.1 |
 | Secrets Manager | 시크릿당 | 약 $0.40 |
 | CloudWatch Logs | 수집 + 저장 | 트래픽에 비례, 소규모 약 $1 |
-| S3 (CFN 템플릿) | 저장 용량 | 약 $0 (30일 후 자동 삭제) |
+| S3 (CFN 템플릿·ALB 로그) | 저장 용량 | 약 $0.1 (30일 후 자동 삭제) |
 | VPC 게이트웨이 엔드포인트 | 없음 | $0 |
 | **합계 (유휴)** | | **약 $37** |
 | Bedrock | 토큰 | 사용량에 비례. 별도 |
@@ -784,6 +792,7 @@ CloudWatch 커스텀 네임스페이스 `LLMGateway`:
 | `llmgw-dev-alb-5xx` | 5분간 타깃 5xx > 5건 |
 | `llmgw-dev-latency-p99` | p99 응답 시간 > 30초, 2회 연속 |
 | `llmgw-dev-unhealthy-targets` | 비정상 타깃 > 0, 3회 연속 |
+| `llmgw-dev-no-healthy-targets` | 정상 타깃 < 1, 3회 연속 (완전 중단) |
 | `llmgw-dev-usage-write-failures` | 사용량 기록 실패 > 0 |
 
 ### 자주 만나는 문제
