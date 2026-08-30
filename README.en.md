@@ -807,6 +807,7 @@ Rough figures for `us-east-1`. Check the
 | ECR | storage | about $0.1 for a few images |
 | Secrets Manager | per secret | about $0.40 |
 | CloudWatch Logs | ingestion + storage | proportional to traffic; about $1 at small scale |
+| S3 (CFN templates) | storage | ~$0 (expired after 30 days) |
 | VPC gateway endpoints | none | $0 |
 | **Total (idle)** | | **about $37** |
 | Bedrock | tokens | proportional to usage; billed separately |

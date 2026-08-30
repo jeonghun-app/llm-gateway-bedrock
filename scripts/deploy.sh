@@ -389,9 +389,45 @@ optional_overrides+=("EcrRepositoryArn=${REPOSITORY_ARN}")
 [[ -n "${REQUEST_FILTERS}" ]] \
     && optional_overrides+=("RequestFilters=${REQUEST_FILTERS}")
 
+# CloudFormation 은 본문으로 직접 넘기는 템플릿을 51,200 바이트로 제한한다.
+# app.yaml 이 그 한도에 도달했다(v1.12.1 에서 여유가 75 바이트였다). S3 를
+# 경유하면 한도가 1MB 로 올라가므로 앞으로 기능을 더해도 다시 막히지 않는다.
+#
+# 버킷은 CloudFormation 이 관리하지 않는다. 스택을 만들기 위해 필요한
+# 버킷을 그 스택이 만들 수는 없다. 이름에 계정 ID 와 리전을 넣어 전역
+# 유일성을 확보한다.
+TEMPLATE_BUCKET="${PROJECT_NAME}-${ENVIRONMENT}-cfn-${ACCOUNT_ID}-${AWS_REGION}"
+if ! aws_cli s3api head-bucket --bucket "${TEMPLATE_BUCKET}" >/dev/null 2>&1; then
+    info "템플릿 버킷 생성 ${TEMPLATE_BUCKET}"
+    # us-east-1 은 LocationConstraint 를 받지 않는다. AWS API 의 예외다.
+    if [[ "${AWS_REGION}" == "us-east-1" ]]; then
+        aws_cli s3api create-bucket --bucket "${TEMPLATE_BUCKET}" >/dev/null
+    else
+        aws_cli s3api create-bucket --bucket "${TEMPLATE_BUCKET}" \
+            --create-bucket-configuration "LocationConstraint=${AWS_REGION}" \
+            >/dev/null
+    fi
+    aws_cli s3api put-public-access-block --bucket "${TEMPLATE_BUCKET}" \
+        --public-access-block-configuration \
+        "BlockPublicAcls=true,IgnorePublicAcls=true,BlockPublicPolicy=true,RestrictPublicBuckets=true" \
+        >/dev/null
+    aws_cli s3api put-bucket-encryption --bucket "${TEMPLATE_BUCKET}" \
+        --server-side-encryption-configuration \
+        '{"Rules":[{"ApplyServerSideEncryptionByDefault":{"SSEAlgorithm":"AES256"}}]}' \
+        >/dev/null
+    # 템플릿 이력은 오래 둘 이유가 없다. 30일 뒤 지워 저장 비용을 없앤다.
+    aws_cli s3api put-bucket-lifecycle-configuration \
+        --bucket "${TEMPLATE_BUCKET}" \
+        --lifecycle-configuration \
+        '{"Rules":[{"ID":"expire-templates","Status":"Enabled","Filter":{"Prefix":""},"Expiration":{"Days":30}}]}' \
+        >/dev/null
+fi
+
 aws_cli cloudformation deploy \
     --stack-name "${APP_STACK}" \
     --template-file "${REPO_ROOT}/infra/app.yaml" \
+    --s3-bucket "${TEMPLATE_BUCKET}" \
+    --s3-prefix "${APP_STACK}" \
     --capabilities CAPABILITY_NAMED_IAM \
     --no-fail-on-empty-changeset \
     --parameter-overrides \
