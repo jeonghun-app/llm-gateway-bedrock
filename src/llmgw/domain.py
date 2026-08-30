@@ -214,6 +214,50 @@ class BreakdownDimension(enum.StrEnum):
     KEY = "key"
 
 
+class AccountGuardrailConfig(_Base):
+    """계정의 가드레일 기준선.
+
+    Amazon Bedrock Guardrails 를 게이트웨이가 모든 요청에 붙여 준다. 고객이
+    콘솔에서 가드레일을 만들어도 Converse 호출마다 식별자를 실어야 적용되므로,
+    클라이언트가 그것을 빼거나 바꾸는 것을 막는 것이 이 기능의 요점이다.
+
+    Attributes:
+        account_id: 소속 계정 ID.
+        guardrail_id: AWS 가드레일 식별자 또는 ARN.
+        guardrail_version: 가드레일 버전. **숫자만 허용한다.** `DRAFT` 는
+            내용이 예고 없이 바뀌므로 프로덕션 통제에 쓸 수 없다. 실측으로
+            확인한 결과 `DRAFT` 도 런타임에서 동작하기 때문에, 여기서 막지
+            않으면 조용히 변하는 정책을 강제하게 된다.
+        enabled: 기준선 적용 여부. 끄면 계정 전체가 가드레일 없이 동작한다.
+        updated_at: 마지막 변경 시각(ISO-8601 UTC).
+    """
+
+    account_id: str
+    guardrail_id: str = pydantic.Field(min_length=1, max_length=2048)
+    guardrail_version: str = pydantic.Field(pattern=r"^[0-9]{1,8}$")
+    enabled: bool = True
+    updated_at: str = ""
+
+
+class GuardrailDecision(_Base):
+    """요청 하나에 적용할 가드레일 판정 결과.
+
+    Attributes:
+        guardrail_id: 적용할 가드레일. 적용하지 않으면 빈 문자열.
+        guardrail_version: 적용할 버전. 적용하지 않으면 빈 문자열.
+        exempt_scope: 면제된 계층(`team` 또는 `user`). 면제가 아니면 빈 문자열.
+    """
+
+    guardrail_id: str = ""
+    guardrail_version: str = ""
+    exempt_scope: str = ""
+
+    @property
+    def applied(self) -> bool:
+        """가드레일을 실제로 붙이는 경우에만 True."""
+        return bool(self.guardrail_id)
+
+
 class Account(_Base):
     """테넌트 단위 계정.
 
@@ -242,6 +286,8 @@ class Team(_Base):
         team_id: 계정 범위에서 유일한 팀 식별자.
         name: 표시용 이름.
         monthly_budget_usd: 팀 월 예산. `None` 이면 계정 예산만 적용된다.
+        guardrail_exempt: 가드레일 면제 여부. 플랫폼 관리자만 바꿀 수 있다.
+        guardrail_exempt_reason: 면제 사유. 면제할 때 필수다.
         status: 활성 상태.
         created_at: 생성 시각(ISO-8601 UTC).
     """
@@ -252,6 +298,8 @@ class Team(_Base):
     monthly_budget_usd: decimal.Decimal | None = pydantic.Field(
         default=None, ge=0
     )
+    guardrail_exempt: bool = False
+    guardrail_exempt_reason: str = pydantic.Field(default="", max_length=512)
     status: EntityStatus = EntityStatus.ACTIVE
     created_at: str = ""
 
@@ -267,6 +315,8 @@ class User(_Base):
         team_id: 소속 팀 ID. 팀이 없으면 빈 문자열.
         monthly_budget_usd: 사용자 월 예산. `None` 이면 상위 예산만 적용된다.
         rpm_limit: 분당 요청 한도. `None` 이면 서버 기본값을 따른다.
+        guardrail_exempt: 가드레일 면제 여부. 플랫폼 관리자만 바꿀 수 있다.
+        guardrail_exempt_reason: 면제 사유. 면제할 때 필수다.
         status: 활성 상태.
         created_at: 생성 시각(ISO-8601 UTC).
     """
@@ -280,6 +330,8 @@ class User(_Base):
         default=None, ge=0
     )
     rpm_limit: int | None = pydantic.Field(default=None, ge=1, le=100_000)
+    guardrail_exempt: bool = False
+    guardrail_exempt_reason: str = pydantic.Field(default="", max_length=512)
     status: EntityStatus = EntityStatus.ACTIVE
     created_at: str = ""
 
@@ -435,6 +487,9 @@ class UsageRecord(_Base):
         status_code: 클라이언트에게 반환한 HTTP 상태 코드.
         error_code: 실패 시 도메인 에러 코드. 성공이면 빈 문자열.
         streamed: 스트리밍 응답이었는지 여부.
+        guardrail_applied: 가드레일을 붙여 호출했는지 여부.
+        guardrail_intervened: 가드레일이 개입해 응답이 차단됐는지 여부.
+        guardrail_exempt_scope: 면제된 계층(`team`/`user`). 면제가 아니면 빈 값.
         pricing_known: 단가 표에서 모델을 찾았는지 여부. `False` 면 비용이
             0으로 기록되므로 대시보드에서 과소 집계를 인지할 수 있다.
     """
@@ -456,6 +511,11 @@ class UsageRecord(_Base):
     status_code: int = 200
     error_code: str = ""
     streamed: bool = False
+    # 가드레일 관측. 적용 여부와 개입 여부를 나눠 둔다. "적용했는데 개입하지
+    # 않았다" 와 "적용조차 하지 않았다" 는 완전히 다른 상태다.
+    guardrail_applied: bool = False
+    guardrail_intervened: bool = False
+    guardrail_exempt_scope: str = ""
     pricing_known: bool = True
 
     @property

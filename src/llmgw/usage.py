@@ -98,6 +98,8 @@ class UsageRecorder:
         status_code: int,
         error_code: str = "",
         streamed: bool = False,
+        guardrail: domain.GuardrailDecision | None = None,
+        stop_reason: str = "",
     ) -> domain.UsageRecord:
         """비용을 계산해 사용량 레코드를 만든다.
 
@@ -144,6 +146,13 @@ class UsageRecorder:
             status_code=status_code,
             error_code=error_code,
             streamed=streamed,
+            guardrail_applied=(guardrail is not None and guardrail.applied),
+            # 개입은 Bedrock 의 정지 이유로 판별한다. 응답 본문을 보지 않으므로
+            # 차단된 내용이 우리 쪽에 남지 않는다.
+            guardrail_intervened=stop_reason == "guardrail_intervened",
+            guardrail_exempt_scope=(
+                guardrail.exempt_scope if guardrail is not None else ""
+            ),
             pricing_known=cost.pricing_known,
         )
 

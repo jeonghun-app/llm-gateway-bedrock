@@ -18,6 +18,7 @@ import boto3
 import botocore.exceptions
 
 from llmgw import cache
+from llmgw import domain
 from llmgw import errors
 from llmgw import observability
 from llmgw import repository
@@ -188,6 +189,7 @@ class BedrockGateway:
         messages: list[_JsonDict],
         system: list[_JsonDict],
         inference_config: _JsonDict,
+        guardrail: domain.GuardrailDecision | None = None,
     ) -> ConverseResult:
         """비스트리밍 Converse 를 호출한다.
 
@@ -210,6 +212,8 @@ class BedrockGateway:
             messages=messages,
             system=system,
             inference_config=inference_config,
+            guardrail=guardrail,
+            streaming=False,
         )
         try:
             response = self._runtime.converse(**params)
@@ -236,6 +240,7 @@ class BedrockGateway:
         messages: list[_JsonDict],
         system: list[_JsonDict],
         inference_config: _JsonDict,
+        guardrail: domain.GuardrailDecision | None = None,
     ) -> typing.Iterator[StreamDelta]:
         """스트리밍 Converse 를 호출한다.
 
@@ -256,6 +261,8 @@ class BedrockGateway:
             messages=messages,
             system=system,
             inference_config=inference_config,
+            guardrail=guardrail,
+            streaming=True,
         )
         try:
             response = self._runtime.converse_stream(**params)
@@ -325,6 +332,55 @@ class BedrockGateway:
                 return key
         return None
 
+    def verify_guardrail(self, guardrail_id: str, version: str) -> None:
+        """가드레일이 존재하고 사용 가능한지 확인한다.
+
+        설정을 저장하기 전에 부른다. 없는 가드레일을 저장하면 이후 모든 요청이
+        `ValidationException` 으로 실패하는데, 그것을 배포 후에 알게 되는 것보다
+        여기서 막는 편이 낫다.
+
+        **런타임 fail-closed 를 대체하지는 않는다.** 저장 시점에 유효했던
+        가드레일이 나중에 삭제되거나 권한이 바뀔 수 있다. 그 경우 AWS 가
+        Converse 를 `ValidationException` 으로 거부하므로 조용히 통과하지는
+        않는다.
+
+        Args:
+            guardrail_id: 가드레일 식별자 또는 ARN.
+            version: 가드레일 버전.
+
+        Raises:
+            ResourceNotFoundError: 가드레일이 없거나 접근할 수 없는 경우.
+            UpstreamError: 그 밖의 AWS 오류.
+        """
+        try:
+            response = self._control.get_guardrail(
+                guardrailIdentifier=guardrail_id, guardrailVersion=version
+            )
+        except botocore.exceptions.ClientError as exc:
+            code = exc.response.get("Error", {}).get("Code", "")
+            if code in ("ResourceNotFoundException", "ValidationException"):
+                raise errors.ResourceNotFoundError(
+                    f"가드레일을 찾을 수 없다: {guardrail_id} 버전 {version}."
+                    " 식별자와 버전, 그리고 이 계정·리전에 있는지 확인한다."
+                ) from exc
+            if code == "AccessDeniedException":
+                raise errors.ResourceNotFoundError(
+                    f"가드레일에 접근할 수 없다: {guardrail_id}."
+                    " 태스크 역할에 bedrock:GetGuardrail 권한이 있는지"
+                    " 확인한다."
+                ) from exc
+            raise errors.UpstreamError(
+                f"가드레일 조회에 실패했다: {code}"
+            ) from exc
+
+        status = str(response.get("status", ""))
+        if status != "READY":
+            # 생성·수정 중인 가드레일을 기준선으로 삼으면 요청이 실패한다.
+            raise errors.ResourceNotFoundError(
+                f"가드레일이 사용 가능한 상태가 아니다: {status}."
+                " READY 가 될 때까지 기다린 뒤 다시 설정한다."
+            )
+
     @staticmethod
     def _build_params(
         *,
@@ -332,17 +388,37 @@ class BedrockGateway:
         messages: list[_JsonDict],
         system: list[_JsonDict],
         inference_config: _JsonDict,
+        guardrail: domain.GuardrailDecision | None = None,
+        streaming: bool = False,
     ) -> _JsonDict:
         """Converse 호출 파라미터를 만든다.
 
         빈 `system` 이나 빈 `inferenceConfig` 를 넘기면 일부 모델이
         ValidationException 을 던지므로 값이 있을 때만 포함한다.
+
+        가드레일은 판정이 적용을 지시할 때만 붙인다. 두 가지를 고정한다.
+
+        - `trace` 는 `disabled` 다. 켜면 응답에 `modelOutput`(차단하려던 원문)
+          이 들어온다. 그것이 로그로 새면 막으려던 내용이 로그에 남는다.
+        - 스트리밍은 `streamProcessingMode` 를 `sync` 로 강제한다. `async` 는
+          차단 대상 텍스트를 클라이언트에 먼저 보내고 나중에 개입을 알린다.
+          실측에서 차단어가 그대로 전달되는 것을 확인했다. 클라이언트가 이
+          값을 고를 수 없어야 한다.
         """
         params: _JsonDict = {"modelId": model_id, "messages": messages}
         if system:
             params["system"] = system
         if inference_config:
             params["inferenceConfig"] = inference_config
+        if guardrail is not None and guardrail.applied:
+            config: _JsonDict = {
+                "guardrailIdentifier": guardrail.guardrail_id,
+                "guardrailVersion": guardrail.guardrail_version,
+                "trace": "disabled",
+            }
+            if streaming:
+                config["streamProcessingMode"] = "sync"
+            params["guardrailConfig"] = config
         return params
 
     def _translate_error(

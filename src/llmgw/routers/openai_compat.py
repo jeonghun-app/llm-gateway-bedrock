@@ -248,6 +248,9 @@ def chat_completions(
             started_at=started_at,
         )
         bedrock_request = translate.to_bedrock_request(payload)
+        # 가드레일은 확장이 요청을 변형한 뒤에 판정한다. 실제로 Bedrock 에
+        # 보내는 내용이 검사 대상이어야 한다.
+        guardrail = services.guardrails.resolve(principal)
     except errors.GatewayError as exc:
         _record_failure(
             services=services,
@@ -267,6 +270,7 @@ def chat_completions(
                 principal=principal,
                 payload=payload,
                 bedrock_request=bedrock_request,
+                guardrail=guardrail,
                 request_id=request_id,
                 started_at=started_at,
             ),
@@ -284,6 +288,7 @@ def chat_completions(
         principal=principal,
         payload=payload,
         bedrock_request=bedrock_request,
+        guardrail=guardrail,
         request_id=request_id,
         started_at=started_at,
     )
@@ -381,6 +386,7 @@ def _blocking_completion(
     principal: domain.Principal,
     payload: schemas.ChatCompletionRequest,
     bedrock_request: translate.BedrockRequest,
+    guardrail: domain.GuardrailDecision,
     request_id: str,
     started_at: datetime.datetime,
 ) -> dict[str, typing.Any]:
@@ -391,6 +397,7 @@ def _blocking_completion(
             messages=bedrock_request.messages,
             system=bedrock_request.system,
             inference_config=bedrock_request.inference_config,
+            guardrail=guardrail,
         )
     except errors.GatewayError as exc:
         _record_failure(
@@ -414,6 +421,8 @@ def _blocking_completion(
         latency_ms=_elapsed_ms(services, started_at),
         status_code=200,
         streamed=False,
+        guardrail=guardrail,
+        stop_reason=result.stop_reason,
     )
     services.recorder.persist(record, key_hash=principal.key_hash)
 
@@ -434,6 +443,7 @@ def _stream_completion(
     principal: domain.Principal,
     payload: schemas.ChatCompletionRequest,
     bedrock_request: translate.BedrockRequest,
+    guardrail: domain.GuardrailDecision,
     request_id: str,
     started_at: datetime.datetime,
 ) -> typing.Iterator[str]:
@@ -464,6 +474,7 @@ def _stream_completion(
             messages=bedrock_request.messages,
             system=bedrock_request.system,
             inference_config=bedrock_request.inference_config,
+            guardrail=guardrail,
         ):
             if delta.text:
                 yield _sse(
@@ -527,6 +538,8 @@ def _stream_completion(
             status_code=status_code,
             error_code=error_code,
             streamed=True,
+            guardrail=guardrail,
+            stop_reason=stop_reason,
         )
         services.recorder.persist(record, key_hash=principal.key_hash)
 

@@ -65,7 +65,7 @@ Parameters:
   ImageUri:
     Type: String
     MinLength: 1
-    Default: ghcr.io/jeonghun-app/llm-gateway-bedrock:v1.16.0
+    Default: ghcr.io/jeonghun-app/llm-gateway-bedrock:v2.0.0
     Description: >-
       ECS 가 실행할 컨테이너 이미지 URI. 태그를 포함한다.
 
@@ -78,7 +78,7 @@ Parameters:
       받으므로(호스트 캐시가 없다) 외부 레지스트리 장애가 스케일아웃과 복구를
       막는다. 그때는 EcrRepositoryArn 도 함께 지정한다.
 
-      예: ghcr.io/jeonghun-app/llm-gateway-bedrock:v1.16.0
+      예: ghcr.io/jeonghun-app/llm-gateway-bedrock:v2.0.0
       예: 123456789012.dkr.ecr.us-east-1.amazonaws.com/llmgw-dev:abc1234
 
   EcrRepositoryArn:
@@ -937,6 +937,13 @@ Resources:
                 Action:
                   - bedrock:ListFoundationModels
                   - bedrock:ListInferenceProfiles
+                  # 가드레일 기준선을 저장하기 전에 존재와 상태를 확인한다.
+                  # 없는 가드레일을 저장하면 이후 모든 요청이 실패한다.
+                  #
+                  # 런타임에 guardrailConfig 를 붙이는 것 자체는 InvokeModel
+                  # 권한으로 충분하다. 태스크 역할과 같은 권한만 가진 역할로
+                  # 실측해 확인했다. ApplyGuardrail 은 필요하지 않다.
+                  - bedrock:GetGuardrail
                 Resource: "*"
       Tags:
         - Key: Project

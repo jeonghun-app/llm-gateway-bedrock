@@ -29,6 +29,7 @@ AWS 자격증명만 있으면 명령 하나로 VPC 부터 DynamoDB 까지 전부
 - [접근 통제 (다중 단말)](#접근-통제-다중-단말)
 - [사용법](#사용법)
 - [모니터링 대시보드](#모니터링-대시보드)
+- [가드레일](#가드레일)
 - [확장점](#확장점)
 - [로컬 실행](#로컬-실행)
 - [테스트](#테스트)
@@ -160,7 +161,7 @@ git clone <이 리포지토리>
 cd llm-gateway-bedrock
 
 ./scripts/deploy.sh --allowed-cidr "$(curl -s https://checkip.amazonaws.com)/32" \
-  --image ghcr.io/jeonghun-app/llm-gateway-bedrock:v1.16.0
+  --image ghcr.io/jeonghun-app/llm-gateway-bedrock:v2.0.0
 ```
 
 **데이터는 당신의 AWS 계정을 벗어나지 않는다.** 이미지를 GitHub Container
@@ -178,7 +179,7 @@ Registry 에서 받아오지만, 그것은 배포 리전과 무관하다. 게이
 
 ```bash
 gh attestation verify \
-  oci://ghcr.io/jeonghun-app/llm-gateway-bedrock:v1.16.0 \
+  oci://ghcr.io/jeonghun-app/llm-gateway-bedrock:v2.0.0 \
   --repo jeonghun-app/llm-gateway-bedrock
 ```
 
@@ -202,8 +203,8 @@ Fargate 는 태스크를 띄울 때마다 이미지를 새로 받는다(호스�
 ```bash
 # 한 번만: 공개 이미지를 계정 내 ECR 로 복사
 aws ecr create-repository --repository-name llmgw --region <리전>
-docker pull ghcr.io/jeonghun-app/llm-gateway-bedrock:v1.16.0
-docker tag ghcr.io/jeonghun-app/llm-gateway-bedrock:v1.16.0 \
+docker pull ghcr.io/jeonghun-app/llm-gateway-bedrock:v2.0.0
+docker tag ghcr.io/jeonghun-app/llm-gateway-bedrock:v2.0.0 \
   <계정ID>.dkr.ecr.<리전>.amazonaws.com/llmgw:v1.10.0
 aws ecr get-login-password --region <리전> \
   | docker login --username AWS --password-stdin <계정ID>.dkr.ecr.<리전>.amazonaws.com
@@ -546,6 +547,46 @@ OpenAI 스펙 중 Bedrock Converse 에 대응이 없는 필드(`presence_penalty
 
 ---
 
+## 가드레일
+
+Amazon Bedrock Guardrails 를 게이트웨이가 모든 요청에 붙인다. 계정 기준선을
+정하고 팀·사용자 단위로 면제할 수 있다.
+
+```bash
+# 계정 기준선. 저장 전에 가드레일이 실제로 있고 READY 인지 확인한다.
+curl -X PUT "$GATEWAY_URL/admin/accounts/acme/guardrail" \
+  -H "X-Admin-Token: $ADMIN_TOKEN" -H 'Content-Type: application/json' \
+  -d '{"guardrail_id":"abc123xyz","guardrail_version":"2"}'
+
+# 사용자 면제. 사유가 필수다.
+curl -X PUT "$GATEWAY_URL/admin/accounts/acme/users/alice/guardrail-exemption" \
+  -H "X-Admin-Token: $ADMIN_TOKEN" -H 'Content-Type: application/json' \
+  -d '{"exempt":true,"reason":"레드팀 평가 (TICKET-1234)"}'
+```
+
+**게이트웨이가 중간에 있어야 하는 이유**는 콘솔에서 가드레일을 만들어도 그것만으로
+적용되지 않기 때문이다. Converse 호출마다 식별자를 실어야 하므로, 애플리케이션이
+그 필드를 빼면 통제가 조용히 사라진다. 게이트웨이가 붙이면 클라이언트가 빼거나
+바꿀 수 없다.
+
+**스트리밍은 `sync` 를 강제한다.** 실측 결과 `async` 는 차단 대상 텍스트를
+클라이언트에 먼저 보내고 나중에 개입을 알린다. 지연 0.66초를 아끼는 대가로 통제가
+무의미해진다.
+
+**버전은 숫자만 받는다.** `DRAFT` 는 런타임에서 동작하지만 내용이 예고 없이
+바뀌므로 거부한다.
+
+**면제는 플랫폼 관리자만** 바꿀 수 있고 사유가 필수다. 계정 관리자가 자기 계정의
+안전 통제를 스스로 해제할 수 있으면 통제가 아니다.
+
+**가드레일 사용료는 대시보드 비용에 포함되지 않는다.** Converse 응답이 가드레일
+사용량을 주지 않아 계산할 수 없다. 모르는 비용을 0 으로 더하면 예산이 무효가
+되므로 더하지 않는다.
+
+자세한 내용은 [`docs/guardrails.md`](docs/guardrails.md) 를 본다.
+
+---
+
 ## 확장점
 
 요청 처리 경로에 자체 코드를 끼워 넣을 수 있다. 첫 릴리스는 **요청 필터**
@@ -869,6 +910,7 @@ CloudWatch 커스텀 네임스페이스 `LLMGateway`:
 | [`SECURITY.md`](SECURITY.md) | 시크릿 관리, 접근 통제, IAM, 데이터 보호 |
 | [`CONTRIBUTING.md`](CONTRIBUTING.md) | 개발 환경, 검증 명령, 커밋·PR 절차 |
 | [`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md) | 기여자 행동 규범 (Contributor Covenant 2.1) |
+| [`docs/guardrails.md`](docs/guardrails.md) | 가드레일 정책, 면제 권한, 스트리밍 동작, 비용 한계 |
 | [`docs/extensions-v1.md`](docs/extensions-v1.md) | 확장점 계약, 신뢰 경계, 실패 정책, 설치 방법 |
 | [`docs/runbook.md`](docs/runbook.md) | 배포·롤백·알람 대응·프로덕션 전환 절차 |
 | [`docs/adr/0001-compute-ecs-fargate.md`](docs/adr/0001-compute-ecs-fargate.md) | 컴퓨트로 Fargate 를 고른 이유 |

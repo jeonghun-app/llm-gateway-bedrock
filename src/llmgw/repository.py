@@ -63,6 +63,10 @@ _TS_INDEX_NAME = "lsi_ts"
 _META_SORT_KEY = "META"
 # 계정별 외부 인증(OIDC) 설정의 정렬 키.
 _AUTH_SORT_KEY = "AUTH"
+# 가드레일 기준선. 인증 설정과 같은 파티션에 두되 정렬 키를 나눈다. 두
+# 설정의 수명주기가 독립적이라 한 항목에 섞으면 한쪽 변경이 다른 쪽을
+# 덮어쓸 수 있다.
+_GUARDRAIL_SORT_KEY = "GUARDRAIL"
 # 분 단위 레이트 리밋 카운터 보존 시간. 분 경계에서 시계가 어긋나도 직전 분이
 # 남아 있어야 한다.
 _RATE_LIMIT_TTL_SECONDS = 120
@@ -476,6 +480,8 @@ class RegistryRepository:
                 "team_id": team.team_id,
                 "display_name": team.name,
                 "monthly_budget_usd": team.monthly_budget_usd,
+                "guardrail_exempt": team.guardrail_exempt,
+                "guardrail_exempt_reason": team.guardrail_exempt_reason,
                 "status": team.status.value,
                 "created_at": team.created_at,
             }
@@ -585,6 +591,67 @@ class RegistryRepository:
                     "이 계정에는 인증 설정이 이미 있다."
                 ) from exc
             raise
+
+    def put_guardrail_config(
+        self, config: domain.AccountGuardrailConfig
+    ) -> None:
+        """계정 가드레일 기준선을 저장한다.
+
+        Args:
+            config: 저장할 설정.
+        """
+        self._table.put_item(
+            Item=_strip_none(
+                {
+                    "pk": account_pk(config.account_id),
+                    "sk": _GUARDRAIL_SORT_KEY,
+                    "entity": "guardrail_config",
+                    "account_id": config.account_id,
+                    "guardrail_id": config.guardrail_id,
+                    "guardrail_version": config.guardrail_version,
+                    "enabled": config.enabled,
+                    "updated_at": config.updated_at,
+                }
+            )
+        )
+
+    def get_guardrail_config(
+        self, account_id: str
+    ) -> domain.AccountGuardrailConfig | None:
+        """계정 가드레일 기준선을 조회한다.
+
+        Args:
+            account_id: 계정 ID.
+
+        Returns:
+            찾은 설정. 없으면 `None`.
+        """
+        item = self._get(account_pk(account_id), _GUARDRAIL_SORT_KEY)
+        if item is None:
+            return None
+        return domain.AccountGuardrailConfig(
+            account_id=str(item.get("account_id", account_id)),
+            guardrail_id=str(item.get("guardrail_id", "")),
+            guardrail_version=str(item.get("guardrail_version", "")),
+            enabled=bool(item.get("enabled", True)),
+            updated_at=str(item.get("updated_at", "")),
+        )
+
+    def delete_guardrail_config(self, account_id: str) -> None:
+        """계정 가드레일 기준선을 삭제한다.
+
+        삭제하면 그 계정은 가드레일 없이 동작한다. 통제를 제거하는 작업이라
+        호출부에서 권한을 확인해야 한다.
+
+        Args:
+            account_id: 계정 ID.
+        """
+        self._table.delete_item(
+            Key={
+                "pk": account_pk(account_id),
+                "sk": _GUARDRAIL_SORT_KEY,
+            }
+        )
 
     def get_auth_config(
         self, account_id: str
@@ -729,6 +796,8 @@ class RegistryRepository:
                 "team_id": user.team_id,
                 "monthly_budget_usd": user.monthly_budget_usd,
                 "rpm_limit": user.rpm_limit,
+                "guardrail_exempt": user.guardrail_exempt,
+                "guardrail_exempt_reason": user.guardrail_exempt_reason,
                 "status": user.status.value,
                 "created_at": user.created_at,
             }
@@ -1231,6 +1300,10 @@ class RegistryRepository:
             monthly_budget_usd=_optional_decimal(
                 item.get("monthly_budget_usd")
             ),
+            guardrail_exempt=bool(item.get("guardrail_exempt", False)),
+            guardrail_exempt_reason=str(
+                item.get("guardrail_exempt_reason", "")
+            ),
             status=domain.EntityStatus(item.get("status", "active")),
             created_at=str(item.get("created_at", "")),
         )
@@ -1248,6 +1321,10 @@ class RegistryRepository:
                 item.get("monthly_budget_usd")
             ),
             rpm_limit=_optional_int(item.get("rpm_limit")),
+            guardrail_exempt=bool(item.get("guardrail_exempt", False)),
+            guardrail_exempt_reason=str(
+                item.get("guardrail_exempt_reason", "")
+            ),
             status=domain.EntityStatus(item.get("status", "active")),
             created_at=str(item.get("created_at", "")),
         )
@@ -1601,6 +1678,9 @@ class UsageStore:
             "status_code": usage.status_code,
             "error_code": usage.error_code,
             "streamed": usage.streamed,
+            "guardrail_applied": usage.guardrail_applied,
+            "guardrail_intervened": usage.guardrail_intervened,
+            "guardrail_exempt_scope": usage.guardrail_exempt_scope,
             "pricing_known": usage.pricing_known,
             "expires_at": expires_at,
         }
