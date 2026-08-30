@@ -56,6 +56,9 @@ UNPRICED_MODEL_POLICY=""
 # 이미 있는 이미지를 쓸 때 지정한다. 지정하면 ECR 스택 생성과 로컬 빌드를
 # 건너뛴다. Docker 를 쓸 수 없는 환경에서 설치하는 경로다.
 PREBUILT_IMAGE=""
+# public | private-nat. private-nat 은 태스크에 공인 IP 를 붙이지 않는 대신
+# NAT Gateway 비용이 붙는다.
+TASK_SUBNET_MODE=""
 ALARM_EMAIL=""
 RUN_SEED="yes"
 RUN_SMOKE="yes"
@@ -104,6 +107,10 @@ usage() {
                             단가 표에 없는 모델 처리 (allow|reject|hide).
                             기본 allow. reject 는 비용 귀속을 보장하고,
                             hide 는 /v1/models 에서 감춘다.
+  --task-subnet-mode <모드> 태스크를 둘 서브넷 (public|private-nat).
+                            기본 public 은 퍼블릭 서브넷 + 공인 IP 로 추가
+                            비용이 없다. private-nat 은 공인 IP 를 붙이지
+                            않는 대신 NAT Gateway 가 월 약 33 USD 를 더한다.
   --image <URI>             이미 있는 이미지로 배포한다. ECR 스택 생성과
                             로컬 Docker 빌드를 건너뛴다. Docker 를 쓸 수 없는
                             환경에서 쓴다. 예:
@@ -154,6 +161,7 @@ while [[ $# -gt 0 ]]; do
         --allowed-model-arn) ALLOWED_BEDROCK_MODEL_ARN="${2:-}"; shift 2 ;;
         --unpriced-model-policy) UNPRICED_MODEL_POLICY="${2:-}"; shift 2 ;;
         --image)            PREBUILT_IMAGE="${2:-}"; shift 2 ;;
+        --task-subnet-mode) TASK_SUBNET_MODE="${2:-}"; shift 2 ;;
         --alarm-email)      ALARM_EMAIL="${2:-}"; shift 2 ;;
         --no-seed)          RUN_SEED="no"; shift ;;
         --no-smoke)         RUN_SMOKE="no"; shift ;;
@@ -200,6 +208,14 @@ command -v jq  >/dev/null 2>&1 || die "jq 가 필요하다."
 
 # 사전 빌드 이미지를 쓰면 로컬 빌드가 없으므로 docker 를 요구하지 않는다.
 # 기업에서 개발자 PC 의 이미지 빌드를 막는 경우가 많아 이 경로가 필요하다.
+if [[ -n "${TASK_SUBNET_MODE}" && "${TASK_SUBNET_MODE}" != "public" \
+      && "${TASK_SUBNET_MODE}" != "private-nat" ]]; then
+    die "--task-subnet-mode 는 public 또는 private-nat 이어야 한다: ${TASK_SUBNET_MODE}"
+fi
+if [[ "${TASK_SUBNET_MODE}" == "private-nat" ]]; then
+    info "프라이빗 서브넷 모드. NAT Gateway 가 월 약 33 USD 를 더한다."
+fi
+
 if [[ -n "${PREBUILT_IMAGE}" ]]; then
     info "사전 빌드 이미지를 사용한다. docker 검사와 빌드를 건너뛴다."
     DOCKER_CMD="skip"
@@ -356,8 +372,12 @@ optional_overrides=()
     && optional_overrides+=("AllowedBedrockModelArn=${ALLOWED_BEDROCK_MODEL_ARN}")
 [[ -n "${UNPRICED_MODEL_POLICY}" ]] \
     && optional_overrides+=("UnpricedModelPolicy=${UNPRICED_MODEL_POLICY}")
-[[ -n "${REPOSITORY_ARN}" ]] \
-    && optional_overrides+=("EcrRepositoryArn=${REPOSITORY_ARN}")
+# 값이 비어도 반드시 넘긴다. 넘기지 않으면 CloudFormation 이 기존 값을
+# 유지하므로, private ECR 로 배포했던 스택을 공개 이미지로 옮길 때 태스크 실행
+# 역할에 ECR pull 권한이 남는다. 최소권한이 깨지는 것을 실측으로 확인했다.
+optional_overrides+=("EcrRepositoryArn=${REPOSITORY_ARN}")
+[[ -n "${TASK_SUBNET_MODE}" ]] \
+    && optional_overrides+=("TaskSubnetMode=${TASK_SUBNET_MODE}")
 
 aws_cli cloudformation deploy \
     --stack-name "${APP_STACK}" \

@@ -28,6 +28,7 @@ DynamoDB tables.
 - [Architecture](#architecture)
 - [Prerequisites](#prerequisites)
 - [Deploy](#deploy)
+- [Running tasks in private subnets](#running-tasks-in-private-subnets)
 - [Access control (multiple clients)](#access-control-multiple-clients)
 - [Usage](#usage)
 - [Identity provider integration (OIDC)](#identity-provider-integration-oidc)
@@ -272,6 +273,41 @@ Key options:
 Run `./scripts/deploy.sh --help` for the full option list.
 
 ---
+
+## Running tasks in private subnets
+
+The default configuration places tasks in public subnets with a public IP. That
+choice saves roughly 33 USD/month in NAT Gateway charges. Nothing on the internet
+can reach a task directly — the security group only admits the ALB — but some
+organizations have policies against tasks holding public IPs at all.
+
+Deploy with `--task-subnet-mode private-nat` and tasks get no public IP.
+
+```bash
+./scripts/deploy.sh --allowed-cidr <IP>/32 --task-subnet-mode private-nat
+```
+
+| | `public` (default) | `private-nat` |
+|---|---|---|
+| Task public IP | yes | no |
+| Outbound path | Internet Gateway | NAT Gateway |
+| Extra monthly cost | $0 | ~$33 + data processing |
+| External registry images | works | works (via NAT) |
+
+DynamoDB and S3 traffic goes through gateway VPC endpoints in both modes. Even in
+private mode that traffic does not traverse the NAT, so it incurs no data
+processing charge.
+
+**Replacing the NAT with interface VPC endpoints is deliberately not offered.**
+The five this setup would need (`bedrock-runtime`, `ecr.api`, `ecr.dkr`,
+`secretsmanager`, `logs`) across two AZs cost about 73 USD/month — more than the
+NAT. If you must cut internet egress entirely, that is the approach you need, and
+then the image must also live in a private ECR in your account: GHCR is not an
+AWS service and cannot be reached through a VPC endpoint.
+
+Only one NAT Gateway is created. One per AZ would improve availability at double
+the cost. ALB inbound traffic does not traverse the NAT, so losing the NAT's AZ
+affects only the tasks' outbound path.
 
 ## Access control (multiple clients)
 
@@ -691,6 +727,7 @@ for the complete list.
 
 | Parameter | Default | Description |
 |---|---|---|
+| `TaskSubnetMode` | `public` | Task subnet placement. `private-nat` drops the public IP and egresses via NAT (~$33/mo extra) |
 | `AccessListMaxEntries` | `20` | Maximum entries in the allow list. Can only be raised after creation |
 | `CertificateArn` | empty | ACM certificate. Supplying it enables HTTPS plus an HTTP→HTTPS redirect |
 | `DesiredCount` | `1` | Steady-state task count. 2 or more is recommended for prod |

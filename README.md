@@ -25,6 +25,7 @@ AWS 자격증명만 있으면 명령 하나로 VPC 부터 DynamoDB 까지 전부
 - [아키텍처](#아키텍처)
 - [사전 요구사항](#사전-요구사항)
 - [배포](#배포)
+- [태스크를 프라이빗 서브넷에 두기](#태스크를-프라이빗-서브넷에-두기)
 - [접근 통제 (다중 단말)](#접근-통제-다중-단말)
 - [사용법](#사용법)
 - [모니터링 대시보드](#모니터링-대시보드)
@@ -172,6 +173,25 @@ Registry 에서 받아오지만, 그것은 배포 리전과 무관하다. 게이
 시작할 때 주입받는다. 이미지 내용은 `Dockerfile` 과 `.dockerignore` 로 확인할
 수 있고, 릴리스마다 GitHub 이 서명한 provenance 증명이 붙는다.
 
+받은 이미지가 정말 이 리포지토리의 CI 에서 나왔는지 직접 검증할 수 있다.
+
+```bash
+gh attestation verify \
+  oci://ghcr.io/jeonghun-app/llm-gateway-bedrock:v1.11.0 \
+  --repo jeonghun-app/llm-gateway-bedrock
+```
+
+종료 코드 0 이면 검증에 통과한 것이다. 이 명령은 이미지의 다이제스트가 이
+리포지토리의 워크플로에서 서명되었음을 확인한다. 실패하면 이미지를 쓰지 않는다.
+
+프로덕션에서는 태그가 아니라 다이제스트로 고정하기를 권한다. 태그는 같은
+이름으로 다른 이미지를 가리킬 수 있다.
+
+```bash
+./scripts/deploy.sh --allowed-cidr <IP>/32 \
+  --image ghcr.io/jeonghun-app/llm-gateway-bedrock@sha256:<다이제스트>
+```
+
 ### 프로덕션: 계정 내 private ECR 로 복사
 
 Fargate 는 태스크를 띄울 때마다 이미지를 새로 받는다(호스트 캐시가 없다).
@@ -263,6 +283,39 @@ cd llm-gateway-bedrock
 전체 옵션은 `./scripts/deploy.sh --help` 로 확인한다.
 
 ---
+
+## 태스크를 프라이빗 서브넷에 두기
+
+기본 구성은 태스크를 퍼블릭 서브넷에 두고 공인 IP 를 붙인다. NAT Gateway 월
+약 33 USD 를 아끼기 위한 선택이다. 인바운드는 보안 그룹이 ALB 만 허용하므로
+인터넷에서 태스크로 직접 들어올 수는 없다. 그래도 태스크가 공인 IP 를 가진다는
+점이 보안 정책에 걸리는 조직이 있다.
+
+`--task-subnet-mode private-nat` 로 배포하면 태스크에 공인 IP 가 붙지 않는다.
+
+```bash
+./scripts/deploy.sh --allowed-cidr <IP>/32 --task-subnet-mode private-nat
+```
+
+| 항목 | `public` (기본) | `private-nat` |
+|---|---|---|
+| 태스크 공인 IP | 붙는다 | 붙지 않는다 |
+| 아웃바운드 경로 | Internet Gateway 직결 | NAT Gateway |
+| 추가 월 비용 | $0 | 약 $33 + 데이터 처리비 |
+| 외부 레지스트리 이미지 | 가능 | 가능 (NAT 경유) |
+
+DynamoDB 와 S3 는 두 모드 모두 게이트웨이 VPC 엔드포인트로 나간다. 프라이빗
+모드에서도 이 트래픽은 NAT 를 타지 않아 데이터 처리비가 붙지 않는다.
+
+**인터페이스 VPC 엔드포인트로 NAT 를 대신하는 방법은 넣지 않았다.** 이 구성에
+필요한 5종(`bedrock-runtime`, `ecr.api`, `ecr.dkr`, `secretsmanager`, `logs`)을
+2개 AZ 에 두면 월 약 73 USD 로 NAT 보다 비싸다. 인터넷 이그레스를 완전히
+차단해야 한다면 그 방식이 필요하고, 그때는 이미지도 계정 내 private ECR 에
+있어야 한다. GHCR 은 AWS 서비스가 아니라 VPC 엔드포인트로 도달할 수 없다.
+
+NAT Gateway 는 한 개만 만든다. AZ 마다 두면 가용성이 오르지만 비용이 두 배가
+된다. ALB 인바운드는 NAT 를 타지 않으므로, NAT 가 있는 AZ 가 죽어도 영향은
+태스크의 아웃바운드에 한정된다.
 
 ## 접근 통제 (다중 단말)
 
@@ -592,6 +645,7 @@ LLMGW_BASE_URL="$GATEWAY_URL" LLMGW_ADMIN_TOKEN="$ADMIN_TOKEN" \
 
 | 파라미터 | 기본값 | 설명 |
 |---|---|---|
+| `TaskSubnetMode` | `public` | 태스크 서브넷. `private-nat` 은 공인 IP 없이 NAT 경유 (월 약 $33 추가) |
 | `AccessListMaxEntries` | `20` | 접근 허용 목록 최대 항목 수. 생성 후 늘릴 수만 있다 |
 | `CertificateArn` | 빈 값 | ACM 인증서. 주면 HTTPS + HTTP→HTTPS 리다이렉트 |
 | `DesiredCount` | `1` | 상시 태스크 수. prod 는 2 이상 권장 |
@@ -625,7 +679,9 @@ LLMGW_BASE_URL="$GATEWAY_URL" LLMGW_ADMIN_TOKEN="$ADMIN_TOKEN" \
 요청당 추가되는 DynamoDB 쓰기는 트랜잭션 11개 항목이라 약 22 WRU 다. 100만
 요청이면 대략 $27 수준이다. 자세한 근거는 [`docs/adr/0002`](docs/adr/0002-datastore-dynamodb.md) 를 본다.
 
-NAT Gateway 를 쓰지 않아 월 $40 를 절약한다. 대신 태스크에 공인 IP 가 붙는다.
+기본 구성은 NAT Gateway 를 쓰지 않아 월 약 $33 을 절약한다. 대신 태스크에
+공인 IP 가 붙는다. 공인 IP 를 피해야 하면 `--task-subnet-mode private-nat` 로
+배포한다([상세](#태스크를-프라이빗-서브넷에-두기)).
 판단 근거는 [`docs/adr/0003`](docs/adr/0003-network-and-exposure.md) 에 있다.
 
 `./scripts/teardown.sh` 로 전부 삭제하면 과금이 멈춘다.
