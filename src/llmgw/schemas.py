@@ -21,10 +21,10 @@ _SUPPORTED_CHOICE_COUNT = 1
 
 
 class ContentPart(pydantic.BaseModel):
-    """멀티모달 메시지의 텍스트 조각.
+    """메시지 본문 조각.
 
     Attributes:
-        type: 조각 종류. 현재는 `text` 만 처리한다.
+        type: 조각 종류. `text` 만 지원한다.
         text: 텍스트 내용.
     """
 
@@ -32,6 +32,15 @@ class ContentPart(pydantic.BaseModel):
 
     type: str = "text"
     text: str = ""
+
+    def is_text(self) -> bool:
+        """텍스트 조각이면 True.
+
+        OpenAI 는 `image_url`, `input_audio` 같은 종류도 정의한다. Bedrock
+        Converse 는 그에 대응하는 content block 을 지원하지만 이 게이트웨이는
+        아직 변환하지 않는다.
+        """
+        return self.type == "text"
 
 
 class ChatMessage(pydantic.BaseModel):
@@ -49,8 +58,30 @@ class ChatMessage(pydantic.BaseModel):
     content: str | list[ContentPart] | None = None
     name: str | None = None
 
+    def unsupported_part_types(self) -> tuple[str, ...]:
+        """지원하지 않는 조각 종류를 중복 없이 반환한다.
+
+        이 검사가 필요한 이유는 `text()` 가 텍스트가 아닌 조각을 **조용히
+        버리기** 때문이다. 이미지를 보낸 클라이언트가 텍스트만 전달된 응답을
+        받으면, 모델이 이미지를 보고 답한 것으로 오해한다. 조용히 버리는 것보다
+        거부하는 편이 정직하다.
+
+        Returns:
+            지원하지 않는 `type` 값 튜플. 모두 지원하면 빈 튜플.
+        """
+        if not isinstance(self.content, list):
+            return ()
+        seen: list[str] = []
+        for part in self.content:
+            if not part.is_text() and part.type not in seen:
+                seen.append(part.type)
+        return tuple(seen)
+
     def text(self) -> str:
         """메시지 본문을 평평한 문자열로 만든다.
+
+        텍스트가 아닌 조각은 버린다. 호출 전에
+        `unsupported_part_types()` 로 검증해야 한다.
 
         Returns:
             텍스트 조각을 개행으로 이어붙인 문자열. 내용이 없으면 빈 문자열.

@@ -77,31 +77,85 @@ def _visible_models(services: services_module.Services) -> tuple[str, ...]:
     )
 
 
+def _reject_unsupported_content(
+    payload: schemas.ChatCompletionRequest,
+) -> None:
+    """지원하지 않는 본문 조각이 있으면 거부한다.
+
+    Bedrock Converse 는 이미지·문서 content block 을 지원하지만 이 게이트웨이는
+    아직 변환하지 않는다. 변환하지 않은 채 통과시키면 `ChatMessage.text()` 가
+    텍스트 조각만 이어붙이고 나머지를 버린다. 이미지를 보낸 클라이언트는 모델이
+    이미지를 보고 답한 것으로 오해한 채 결과를 쓴다. 조용히 버리는 것보다
+    거부하는 편이 정직하다.
+
+    Bedrock 을 호출하기 전에 검사하므로 비용이 발생하지 않는다.
+
+    Args:
+        payload: 요청 본문.
+
+    Raises:
+        InvalidRequestError: 텍스트가 아닌 조각이 있는 경우.
+    """
+    unsupported: list[str] = []
+    for message in payload.messages:
+        for part_type in message.unsupported_part_types():
+            if part_type not in unsupported:
+                unsupported.append(part_type)
+    if not unsupported:
+        return
+    raise errors.InvalidRequestError(
+        "지원하지 않는 메시지 본문 종류다: "
+        + ", ".join(sorted(unsupported))
+        + ". 이 게이트웨이는 텍스트만 Bedrock 으로 전달한다. 텍스트가 아닌"
+        " 조각을 조용히 버리면 모델이 그것을 보고 답한 것으로 오해하게 되므로"
+        " 거부한다."
+    )
+
+
 def _enforce_pricing_policy(
-    services: services_module.Services, model_id: str
+    services: services_module.Services,
+    model_id: str,
+    principal: domain.Principal,
 ) -> None:
     """단가를 모르는 모델 요청을 정책에 따라 거부한다.
 
-    `reject` 정책은 비용 귀속을 보장한다. 단가가 없으면 비용이 0으로
-    집계되고, 그러면 월 예산이 영원히 걸리지 않으며 청구 배분에서도 빠진다.
-    그 상태를 허용할 수 없는 조직을 위한 선택지다.
+    단가가 없으면 비용이 0 으로 집계된다. 그 결과가 두 가지로 갈린다.
+
+    - 예산을 쓰지 않는 주체: 보고 정확도가 떨어진다. 불편하지만 통제가
+      깨지는 것은 아니다.
+    - 예산을 쓰는 주체: **월 예산이 영원히 걸리지 않는다.** 설정한 상한이
+      조용히 무효가 되므로 통제 우회다.
+
+    그래서 두 경우를 다르게 다룬다. `reject` 정책은 모든 요청을 거부하고,
+    기본값 `allow` 여도 **금액 예산이 걸린 주체에게는 거부한다.** 예산을
+    설정한 운영자는 그것이 지켜진다고 믿을 자격이 있다.
 
     Args:
         services: 서비스 컨테이너.
         model_id: 요청한 모델 ID.
+        principal: 인증된 요청 주체.
 
     Raises:
-        InvalidRequestError: `reject` 정책이고 단가가 없는 경우.
+        InvalidRequestError: 단가가 없고, 정책이 `reject` 이거나 주체에게
+            금액 예산이 설정된 경우.
     """
-    if services.settings.unpriced_model_policy != "reject":
-        return
     if services.pricing.get(model_id) is not None:
         return
-    raise errors.InvalidRequestError(
-        f"이 모델의 단가가 등록되지 않아 요청을 거부한다: {model_id}."
-        " 비용 귀속을 보장할 수 없기 때문이다. pricing.json 에 단가를"
-        " 추가하거나 LLMGW_UNPRICED_MODEL_POLICY 를 조정한다."
-    )
+
+    if services.settings.unpriced_model_policy == "reject":
+        raise errors.InvalidRequestError(
+            f"이 모델의 단가가 등록되지 않아 요청을 거부한다: {model_id}."
+            " 비용 귀속을 보장할 수 없기 때문이다. pricing.json 에 단가를"
+            " 추가하거나 LLMGW_UNPRICED_MODEL_POLICY 를 조정한다."
+        )
+
+    if principal.has_monetary_budget:
+        raise errors.InvalidRequestError(
+            f"이 모델의 단가가 등록되지 않아 요청을 거부한다: {model_id}."
+            " 이 키에는 월 예산이 걸려 있는데, 단가를 모르는 모델은 비용이"
+            " 0 으로 집계되어 예산이 영원히 걸리지 않는다. pricing.json 에"
+            " 단가를 추가하거나 예산을 해제한다."
+        )
 
 
 @router.get("/models")
@@ -181,8 +235,9 @@ def chat_completions(
     principal = services.authenticator.authenticate(authorization)
 
     try:
+        _reject_unsupported_content(payload)
         services.authenticator.enforce_rate_limit(principal, started_at)
-        _enforce_pricing_policy(services, payload.model)
+        _enforce_pricing_policy(services, payload.model, principal)
         services.authenticator.enforce_model(principal, payload.model)
         services.authenticator.enforce_budget(principal, started_at)
         payload = _apply_request_filters(
