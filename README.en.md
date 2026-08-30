@@ -33,6 +33,7 @@ DynamoDB tables.
 - [Usage](#usage)
 - [Identity provider integration (OIDC)](#identity-provider-integration-oidc)
 - [Monitoring dashboard](#monitoring-dashboard)
+- [Extension points](#extension-points)
 - [Running locally](#running-locally)
 - [Tests](#tests)
 - [Environment variables](#environment-variables)
@@ -611,6 +612,55 @@ time does not change as request volume grows.
 
 ---
 
+## Extension points
+
+You can insert your own code into the request path. This first release exposes a
+single extension point: the request filter.
+
+```python
+from llmgw.extensions import v1
+
+
+class RejectSecrets:
+    def filter_request(
+        self, payload: v1.RequestPayload, *, context: v1.RequestContext
+    ) -> v1.RequestPayload:
+        if "AKIA" in payload.messages[-1].content:
+            raise v1.RequestRejectedError("request contains a credential")
+        return payload
+```
+
+```bash
+./scripts/deploy.sh --allowed-cidr <IP>/32 \
+  --image <derived image URI> \
+  --request-filters "my_ext.filters:RejectSecrets"
+```
+
+Filters run after authentication, rate limiting, model authorization, and budget
+checks have all passed, and **before the Bedrock call**. Rejecting therefore
+costs nothing. The model and the streaming flag cannot be changed — if they
+could, a filter would bypass authorization checks that already passed.
+
+**Failures are not passed through.** If a filter raises or exceeds its time
+limit (1 second by default), the request fails with 503 and Bedrock is never
+called. Letting a request through when the PII filter is broken defeats the
+point of enabling it.
+
+**Extensions are not sandboxed.** They run as fully trusted code inside the
+gateway process, with access to prompts and to the task role's credentials. That
+is why installing one is not enough to activate it: only what you list explicitly
+runs, and modules you did not list are never even imported.
+
+Using your own extension requires **building a derived image** on top of the
+public one. There is no way to attach arbitrary Python code to an already-built
+image at runtime. If you do not use extensions, the Docker-free install path
+stays intact.
+
+The contract, trust boundary, and install procedure are in
+[`docs/extensions-v1.md`](docs/extensions-v1.md).
+
+---
+
 ## Running locally
 
 ```bash
@@ -705,6 +755,8 @@ so the only time you set them yourself is when running locally.
 | `LLMGW_OIDC_PLATFORM_ADMIN_GROUPS` | no | (empty) | Groups granted platform-wide admin authority. Comma separated |
 | `LLMGW_DEFAULT_ALLOWED_MODELS` | no | (empty) | Applied when a key has no allowlist. Comma separated. Empty means all models |
 | `LLMGW_UNPRICED_MODEL_POLICY` | no | `allow` | How to handle models missing from the pricing table. `allow` (pass through, cost 0) / `reject` / `hide` (omit from `/v1/models`) |
+| `LLMGW_REQUEST_FILTERS` | no | (empty) | Request filter extensions to activate. `module:Class`, comma-separated. Listed order is applied order |
+| `LLMGW_EXTENSION_TIMEOUT_SECONDS` | no | `1.0` | Per-extension time limit |
 | `LLMGW_USAGE_TTL_DAYS` | no | `90` | Retention for raw usage records |
 | `LLMGW_PRICING_FILE` | no | in-package `pricing.json` | Path to the model pricing table |
 | `LLMGW_LOG_LEVEL` | no | `INFO` | Log level |
@@ -728,6 +780,7 @@ for the complete list.
 | Parameter | Default | Description |
 |---|---|---|
 | `TaskSubnetMode` | `public` | Task subnet placement. `private-nat` drops the public IP and egresses via NAT (~$33/mo extra) |
+| `RequestFilters` | empty | Request filter extensions to activate (`module:Class`, comma-separated) |
 | `AccessListMaxEntries` | `20` | Maximum entries in the allow list. Can only be raised after creation |
 | `CertificateArn` | empty | ACM certificate. Supplying it enables HTTPS plus an HTTP→HTTPS redirect |
 | `DesiredCount` | `1` | Steady-state task count. 2 or more is recommended for prod |

@@ -243,6 +243,32 @@ Parameters:
     MinValue: 1
     Description: p99 응답 시간 알람 임계값(초).
 
+  RequestFilters:
+    Type: String
+    Default: ""
+    Description: >-
+      활성화할 요청 필터 확장. `module:Class` 명세를 쉼표로 구분한다. 적은
+      순서가 적용 순서다.
+
+      확장은 게이트웨이 프로세스 안에서 신뢰된 코드로 동작한다. 샌드박스가
+      아니다. 프롬프트를 읽고 태스크 역할 자격증명에 접근할 수 있으므로,
+      코드를 검증한 확장만 지정한다.
+
+      기본 공개 이미지에는 확장이 들어 있지 않다. 자체 확장을 쓰려면 공개
+      이미지를 기반으로 파생 이미지를 만들어 ImageUri 로 지정한다. 자세한
+      내용은 docs/extensions-v1.md 를 본다.
+
+  ExtensionTimeoutSeconds:
+    Type: Number
+    Default: 1
+    MinValue: 0.05
+    MaxValue: 30
+    Description: >-
+      확장 하나의 제한 시간(초). Bedrock 읽기 타임아웃과 달리 짧게 잡는다.
+      필터는 지역 검사나 짧은 정책 조회여야 하고, 여기서 오래 기다리면
+      게이트웨이의 워커가 묶인다. 초과하면 그 확장은 차단되고 이후 요청이
+      즉시 503 이 된다.
+
   UnpricedModelPolicy:
     Type: String
     Default: allow
@@ -1102,6 +1128,10 @@ Resources:
               Value: LLMGateway
             - Name: LLMGW_UNPRICED_MODEL_POLICY
               Value: !Ref UnpricedModelPolicy
+            - Name: LLMGW_REQUEST_FILTERS
+              Value: !Ref RequestFilters
+            - Name: LLMGW_EXTENSION_TIMEOUT_SECONDS
+              Value: !Ref ExtensionTimeoutSeconds
           Secrets:
             # 토큰이 태스크 정의에 평문으로 남지 않는다. ECS 가 실행 시점에
             # Secrets Manager 에서 읽어 환경변수로 주입한다.

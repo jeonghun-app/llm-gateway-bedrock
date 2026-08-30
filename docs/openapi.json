@@ -736,7 +736,7 @@
   "info": {
     "description": "Amazon Bedrock 앞단의 OpenAI 호환 게이트웨이.\n\n- `POST /v1/chat/completions` — OpenAI Chat Completions 호환 (스트리밍 지원)\n- `GET /v1/models` — 호출 가능한 모델 목록\n- `/admin/*` — 계정·팀·사용자·API 키 관리 (`X-Admin-Token` 필요)\n- `/analytics/*` — 계정·팀·사용자·모델별 사용량 집계 (`X-Admin-Token` 필요)\n- `/ui` — 모니터링 대시보드",
     "title": "LLM Gateway",
-    "version": "1.12.1"
+    "version": "1.13.0"
   },
   "openapi": "3.1.0",
   "paths": {
@@ -4133,7 +4133,7 @@
     },
     "/v1/chat/completions": {
       "post": {
-        "description": "채팅 완성을 수행한다.\n\nArgs:\n    payload: OpenAI 형식 요청 본문.\n    services: 서비스 컨테이너.\n    authorization: `Bearer <api-key>` 헤더.\n    x_request_id: 클라이언트가 지정한 요청 ID. 재시도 시 같은 값을\n        보내면 사용량이 중복 집계되지 않는다.\n\nReturns:\n    비스트리밍이면 OpenAI 형식 응답 딕셔너리, 스트리밍이면\n    `StreamingResponse`.\n\nRaises:\n    GatewayError: 인증·권한·예산·업스트림 오류가 발생한 경우.",
+        "description": "채팅 완성을 수행한다.\n\nArgs:\n    payload: OpenAI 형식 요청 본문.\n    services: 서비스 컨테이너.\n    authorization: `Bearer <api-key>` 헤더.\n    x_request_id: 클라이언트가 지정한 상관관계 ID. 응답 헤더와 모든\n        로그, 사용량 레코드에 그대로 남는다. **멱등 키가 아니다.**\n        Bedrock 호출은 한 번마다 실제 비용이 발생하므로 같은 값으로\n        재시도하면 호출 횟수만큼 집계된다.\n\nReturns:\n    비스트리밍이면 OpenAI 형식 응답 딕셔너리, 스트리밍이면\n    `StreamingResponse`.\n\nRaises:\n    GatewayError: 인증·권한·예산·업스트림 오류가 발생한 경우.",
         "operationId": "chat_completions_v1_chat_completions_post",
         "parameters": [
           {

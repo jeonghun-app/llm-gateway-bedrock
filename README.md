@@ -29,6 +29,7 @@ AWS 자격증명만 있으면 명령 하나로 VPC 부터 DynamoDB 까지 전부
 - [접근 통제 (다중 단말)](#접근-통제-다중-단말)
 - [사용법](#사용법)
 - [모니터링 대시보드](#모니터링-대시보드)
+- [확장점](#확장점)
 - [로컬 실행](#로컬-실행)
 - [테스트](#테스트)
 - [환경변수](#환경변수)
@@ -532,6 +533,52 @@ OpenAI 스펙 중 Bedrock Converse 에 대응이 없는 필드(`presence_penalty
 
 ---
 
+## 확장점
+
+요청 처리 경로에 자체 코드를 끼워 넣을 수 있다. 첫 릴리스는 **요청 필터**
+하나만 공개한다.
+
+```python
+from llmgw.extensions import v1
+
+
+class RejectSecrets:
+    def filter_request(
+        self, payload: v1.RequestPayload, *, context: v1.RequestContext
+    ) -> v1.RequestPayload:
+        if "AKIA" in payload.messages[-1].content:
+            raise v1.RequestRejectedError("자격증명이 포함된 요청")
+        return payload
+```
+
+```bash
+./scripts/deploy.sh --allowed-cidr <IP>/32 \
+  --image <파생 이미지 URI> \
+  --request-filters "my_ext.filters:RejectSecrets"
+```
+
+확장은 인증·레이트리밋·모델권한·예산 검사를 모두 통과한 뒤, **Bedrock 호출
+전에** 실행된다. 따라서 거부해도 비용이 발생하지 않는다. 모델과 스트리밍
+여부는 바꿀 수 없다 — 바꿀 수 있으면 이미 통과한 권한 검사를 우회하게 된다.
+
+**고장은 통과시키지 않는다.** 확장이 예외를 던지거나 제한 시간(기본 1초)을
+넘기면 503 이고 Bedrock 을 호출하지 않는다. 개인정보 마스킹이 고장났을 때
+요청을 흘려보내면 확장을 켠 의미가 없다.
+
+**확장은 샌드박스가 아니다.** 게이트웨이 프로세스 안에서 신뢰된 코드로 돌며
+프롬프트와 태스크 역할 자격증명에 접근할 수 있다. 그래서 설치만으로는
+동작하지 않고, 위처럼 명시적으로 나열한 것만 실행된다. 나열하지 않은 모듈은
+import 조차 하지 않는다.
+
+자체 확장을 쓰려면 **공개 이미지를 기반으로 파생 이미지를 만들어야 한다.**
+임의의 파이썬 코드를 이미 만들어진 이미지에 런타임으로 붙이는 방법은 없다.
+확장을 쓰지 않으면 Docker 없이 설치하는 경로가 그대로 유지된다.
+
+계약과 신뢰 경계, 설치 절차는 [`docs/extensions-v1.md`](docs/extensions-v1.md)
+에 있다.
+
+---
+
 ## 로컬 실행
 
 ```bash
@@ -625,6 +672,8 @@ LLMGW_BASE_URL="$GATEWAY_URL" LLMGW_ADMIN_TOKEN="$ADMIN_TOKEN" \
 | `LLMGW_ADMIN_TOKEN` | **예** | (빈 값) | 관리 API·대시보드 토큰. 비면 관리 API가 503 |
 | `LLMGW_DEFAULT_ALLOWED_MODELS` | 아니오 | (빈 값) | 키에 허용 목록이 없을 때 적용. 쉼표 구분. 비면 전체 허용 |
 | `LLMGW_UNPRICED_MODEL_POLICY` | 아니오 | `allow` | 단가 표에 없는 모델 처리. `allow`(통과·비용 0) / `reject`(거부) / `hide`(목록에서 감춤) |
+| `LLMGW_REQUEST_FILTERS` | 아니오 | (빈 값) | 활성화할 요청 필터 확장. `module:Class` 쉼표 구분. 적은 순서가 적용 순서 |
+| `LLMGW_EXTENSION_TIMEOUT_SECONDS` | 아니오 | `1.0` | 확장 하나의 제한 시간 |
 | `LLMGW_USAGE_TTL_DAYS` | 아니오 | `90` | usage 원본 보존 기간 |
 | `LLMGW_PRICING_FILE` | 아니오 | 패키지 내 `pricing.json` | 모델 단가 표 경로 |
 | `LLMGW_LOG_LEVEL` | 아니오 | `INFO` | 로그 레벨 |
@@ -646,6 +695,7 @@ LLMGW_BASE_URL="$GATEWAY_URL" LLMGW_ADMIN_TOKEN="$ADMIN_TOKEN" \
 | 파라미터 | 기본값 | 설명 |
 |---|---|---|
 | `TaskSubnetMode` | `public` | 태스크 서브넷. `private-nat` 은 공인 IP 없이 NAT 경유 (월 약 $33 추가) |
+| `RequestFilters` | 빈 값 | 활성화할 요청 필터 확장 (`module:Class`, 쉼표 구분) |
 | `AccessListMaxEntries` | `20` | 접근 허용 목록 최대 항목 수. 생성 후 늘릴 수만 있다 |
 | `CertificateArn` | 빈 값 | ACM 인증서. 주면 HTTPS + HTTP→HTTPS 리다이렉트 |
 | `DesiredCount` | `1` | 상시 태스크 수. prod 는 2 이상 권장 |
@@ -801,6 +851,7 @@ CloudWatch 커스텀 네임스페이스 `LLMGateway`:
 | [`SECURITY.md`](SECURITY.md) | 시크릿 관리, 접근 통제, IAM, 데이터 보호 |
 | [`CONTRIBUTING.md`](CONTRIBUTING.md) | 개발 환경, 검증 명령, 커밋·PR 절차 |
 | [`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md) | 기여자 행동 규범 (Contributor Covenant 2.1) |
+| [`docs/extensions-v1.md`](docs/extensions-v1.md) | 확장점 계약, 신뢰 경계, 실패 정책, 설치 방법 |
 | [`docs/runbook.md`](docs/runbook.md) | 배포·롤백·알람 대응·프로덕션 전환 절차 |
 | [`docs/adr/0001-compute-ecs-fargate.md`](docs/adr/0001-compute-ecs-fargate.md) | 컴퓨트로 Fargate 를 고른 이유 |
 | [`docs/adr/0002-datastore-dynamodb.md`](docs/adr/0002-datastore-dynamodb.md) | DynamoDB 선택과 단일 트랜잭션 집계 설계 |

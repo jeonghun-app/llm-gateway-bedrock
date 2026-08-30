@@ -43,13 +43,13 @@ jobs:
           pip install -r requirements-dev.txt
 
       - name: 포맷 확인 (isort)
-        run: isort --check-only src tests scripts
+        run: isort --check-only src tests scripts examples
 
       - name: 포맷 확인 (black)
-        run: black --check src tests scripts
+        run: black --check src tests scripts examples
 
       - name: 린트 (ruff)
-        run: ruff check src tests scripts
+        run: ruff check src tests scripts examples
 
       - name: 타입 체크 (mypy)
         run: mypy

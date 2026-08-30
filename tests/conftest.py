@@ -44,8 +44,9 @@ from llmgw import observability  # noqa: E402
 from llmgw import oidc  # noqa: E402
 from llmgw import pricing  # noqa: E402
 from llmgw import repository  # noqa: E402
-from llmgw import services  # noqa: E402
+from llmgw import services
 from llmgw import usage  # noqa: E402
+from llmgw.extensions import runtime as extensions_runtime  # noqa: E402
 
 TEST_REGION = "us-east-1"
 REGISTRY_TABLE = "llmgw-test-registry"
@@ -584,6 +585,7 @@ def app_services(
     fake_bedrock: FakeBedrock,
     frozen_clock: FrozenClock,
     oidc_verifier: oidc.OidcVerifier,
+    request_filter_chain: extensions_runtime.RequestFilterChain,
 ) -> services.Services:
     """실제 서비스 컨테이너를 조립한다. Bedrock 과 시계만 대역이다."""
     return services.Services(
@@ -600,7 +602,19 @@ def app_services(
         clock=frozen_clock,
         id_factory=SequenceIdFactory("req"),
         oidc=oidc_verifier,
+        request_filters=request_filter_chain,
     )
+
+
+@pytest.fixture
+def request_filter_chain(
+    logger: observability.Logger,
+) -> extensions_runtime.RequestFilterChain:
+    """기본은 확장이 없는 빈 체인이다.
+
+    확장을 검증하는 테스트가 이 픽스처를 override 해서 필터를 주입한다.
+    """
+    return extensions_runtime.RequestFilterChain(filters=(), logger=logger)
 
 
 @pytest.fixture

@@ -59,6 +59,9 @@ PREBUILT_IMAGE=""
 # public | private-nat. private-nat 은 태스크에 공인 IP 를 붙이지 않는 대신
 # NAT Gateway 비용이 붙는다.
 TASK_SUBNET_MODE=""
+# 활성화할 요청 필터 확장. 기본 이미지에는 확장이 없으므로 파생 이미지를
+# 쓸 때만 의미가 있다.
+REQUEST_FILTERS=""
 ALARM_EMAIL=""
 RUN_SEED="yes"
 RUN_SMOKE="yes"
@@ -111,6 +114,10 @@ usage() {
                             기본 public 은 퍼블릭 서브넷 + 공인 IP 로 추가
                             비용이 없다. private-nat 은 공인 IP 를 붙이지
                             않는 대신 NAT Gateway 가 월 약 33 USD 를 더한다.
+  --request-filters <명세>  활성화할 요청 필터 확장 (module:Class, 쉼표 구분).
+                            확장은 게이트웨이 프로세스 안에서 신뢰된 코드로
+                            돈다. 기본 이미지에는 확장이 없으므로 파생
+                            이미지와 함께 쓴다. docs/extensions-v1.md 참고.
   --image <URI>             이미 있는 이미지로 배포한다. ECR 스택 생성과
                             로컬 Docker 빌드를 건너뛴다. Docker 를 쓸 수 없는
                             환경에서 쓴다. 예:
@@ -162,6 +169,7 @@ while [[ $# -gt 0 ]]; do
         --unpriced-model-policy) UNPRICED_MODEL_POLICY="${2:-}"; shift 2 ;;
         --image)            PREBUILT_IMAGE="${2:-}"; shift 2 ;;
         --task-subnet-mode) TASK_SUBNET_MODE="${2:-}"; shift 2 ;;
+        --request-filters)  REQUEST_FILTERS="${2:-}"; shift 2 ;;
         --alarm-email)      ALARM_EMAIL="${2:-}"; shift 2 ;;
         --no-seed)          RUN_SEED="no"; shift ;;
         --no-smoke)         RUN_SMOKE="no"; shift ;;
@@ -378,6 +386,8 @@ optional_overrides=()
 optional_overrides+=("EcrRepositoryArn=${REPOSITORY_ARN}")
 [[ -n "${TASK_SUBNET_MODE}" ]] \
     && optional_overrides+=("TaskSubnetMode=${TASK_SUBNET_MODE}")
+[[ -n "${REQUEST_FILTERS}" ]] \
+    && optional_overrides+=("RequestFilters=${REQUEST_FILTERS}")
 
 aws_cli cloudformation deploy \
     --stack-name "${APP_STACK}" \
