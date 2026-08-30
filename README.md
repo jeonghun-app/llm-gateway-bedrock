@@ -143,6 +143,59 @@ IAM, Secrets Manager, CloudWatch, SNS, Application Auto Scaling 에 대한 생�
 
 ## 배포
 
+설치 경로는 세 가지다. 목적에 맞는 것을 고른다.
+
+| 경로 | Docker 필요 | 용도 |
+|---|---|---|
+| **사전 빌드 이미지** | 아니오 | 평가·빠른 시작 |
+| **계정 내 private ECR** | 아니오(복사만) | 프로덕션 |
+| **소스에서 빌드** | 예 | 기여·수정 |
+
+### 사전 빌드 이미지로 설치 (Docker 불필요)
+
+```bash
+git clone <이 리포지토리>
+cd llm-gateway-bedrock
+
+./scripts/deploy.sh --allowed-cidr "$(curl -s https://checkip.amazonaws.com)/32" \
+  --image ghcr.io/jeonghun-app/llm-gateway-bedrock:v1.11.0
+```
+
+**데이터는 당신의 AWS 계정을 벗어나지 않는다.** 이미지를 GitHub Container
+Registry 에서 받아오지만, 그것은 배포 리전과 무관하다. 게이트웨이, DynamoDB
+테이블, 로그, Bedrock 호출은 모두 `--region` 으로 지정한 리전(기본
+`us-east-1`)의 당신 계정 안에서 일어난다. 프롬프트와 응답 본문은 애초에
+저장하지 않는다.
+
+이미지에는 시크릿이 없다. `src/` 와 고정된 파이썬 의존성만 들어가고, 관리
+토큰은 배포 시 CloudFormation 이 만들어 Secrets Manager 에 넣은 뒤 태스크가
+시작할 때 주입받는다. 이미지 내용은 `Dockerfile` 과 `.dockerignore` 로 확인할
+수 있고, 릴리스마다 GitHub 이 서명한 provenance 증명이 붙는다.
+
+### 프로덕션: 계정 내 private ECR 로 복사
+
+Fargate 는 태스크를 띄울 때마다 이미지를 새로 받는다(호스트 캐시가 없다).
+따라서 외부 레지스트리 장애가 스케일아웃과 장애 복구를 막는다. 프로덕션에서는
+이미지를 계정 안으로 복사하고 그 URI 를 쓴다.
+
+```bash
+# 한 번만: 공개 이미지를 계정 내 ECR 로 복사
+aws ecr create-repository --repository-name llmgw --region <리전>
+docker pull ghcr.io/jeonghun-app/llm-gateway-bedrock:v1.11.0
+docker tag ghcr.io/jeonghun-app/llm-gateway-bedrock:v1.11.0 \
+  <계정ID>.dkr.ecr.<리전>.amazonaws.com/llmgw:v1.10.0
+aws ecr get-login-password --region <리전> \
+  | docker login --username AWS --password-stdin <계정ID>.dkr.ecr.<리전>.amazonaws.com
+docker push <계정ID>.dkr.ecr.<리전>.amazonaws.com/llmgw:v1.10.0
+
+# 배포. EcrRepositoryArn 을 주면 태스크 실행 역할의 pull 권한이 그 리포지토리로
+# 좁혀진다.
+./scripts/deploy.sh --allowed-cidr <IP>/32 \
+  --image <계정ID>.dkr.ecr.<리전>.amazonaws.com/llmgw:v1.10.0
+```
+
+### 소스에서 빌드 (기여자)
+
 ```bash
 git clone <이 리포지토리>
 cd llm-gateway-bedrock
