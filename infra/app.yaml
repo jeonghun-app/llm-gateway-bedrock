@@ -65,7 +65,7 @@ Parameters:
   ImageUri:
     Type: String
     MinLength: 1
-    Default: ghcr.io/jeonghun-app/llm-gateway-bedrock:v1.13.2
+    Default: ghcr.io/jeonghun-app/llm-gateway-bedrock:v1.14.0
     Description: >-
       ECS 가 실행할 컨테이너 이미지 URI. 태그를 포함한다.
 
@@ -78,7 +78,7 @@ Parameters:
       받으므로(호스트 캐시가 없다) 외부 레지스트리 장애가 스케일아웃과 복구를
       막는다. 그때는 EcrRepositoryArn 도 함께 지정한다.
 
-      예: ghcr.io/jeonghun-app/llm-gateway-bedrock:v1.13.2
+      예: ghcr.io/jeonghun-app/llm-gateway-bedrock:v1.14.0
       예: 123456789012.dkr.ecr.us-east-1.amazonaws.com/llmgw-dev:abc1234
 
   EcrRepositoryArn:
@@ -242,6 +242,15 @@ Parameters:
     Default: 30
     MinValue: 1
     Description: p99 응답 시간 알람 임계값(초).
+
+  AccessLogRetentionDays:
+    Type: Number
+    Default: 30
+    MinValue: 1
+    MaxValue: 3650
+    Description: >-
+      ALB 접근 로그 보존 기간(일). 로그에 소스 IP 가 남으므로 개인정보로
+      취급해야 한다. 조사에 필요한 만큼만 둔다.
 
   RequestFilters:
     Type: String
@@ -962,8 +971,83 @@ Resources:
   # -------------------------------------------------------------------------
   # 로드 밸런서
   # -------------------------------------------------------------------------
+  # ALB 접근 로그 저장소.
+  #
+  # 게이트웨이 프로세스 로그만으로는 앱에 도달하지 못한 요청, 소스 IP 이력,
+  # ALB 가 만든 4xx/5xx 를 재구성할 수 없다. 사고 후 조사에 필요하다.
+  #
+  # 소스 IP 가 남으므로 개인정보로 취급해야 한다. 보존 기간을 짧게 두고
+  # 퍼블릭 액세스를 차단한다.
+  AccessLogBucket:
+    Type: AWS::S3::Bucket
+    # 로그는 사고 조사 자료다. 스택을 지워도 남겨 둔다. 완전 삭제는
+    # teardown.sh --purge-data 로만 한다.
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      BucketName: !Sub "${ProjectName}-${Environment}-alb-logs-${AWS::AccountId}-${AWS::Region}"
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              # ALB 접근 로그는 SSE-KMS 를 지원하지 않는다. AES256 만 가능하다.
+              SSEAlgorithm: AES256
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        IgnorePublicAcls: true
+        BlockPublicPolicy: true
+        RestrictPublicBuckets: true
+      OwnershipControls:
+        Rules:
+          - ObjectOwnership: BucketOwnerEnforced
+      LifecycleConfiguration:
+        Rules:
+          - Id: expire-access-logs
+            Status: Enabled
+            ExpirationInDays: !Ref AccessLogRetentionDays
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Owner
+          Value: !Ref Owner
+        - Key: ManagedBy
+          Value: cloudformation
+
+  # ALB 는 리전별 서비스 주계정으로 로그를 쓴다. logdelivery.elasticloadbalancing
+  # 서비스 주체를 쓰면 리전 계정 ID 표를 관리하지 않아도 된다.
+  AccessLogBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref AccessLogBucket
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: AllowAlbLogDelivery
+            Effect: Allow
+            Principal:
+              Service: logdelivery.elasticloadbalancing.amazonaws.com
+            Action: s3:PutObject
+            Resource: !Sub "${AccessLogBucket.Arn}/alb/AWSLogs/${AWS::AccountId}/*"
+            Condition:
+              StringEquals:
+                s3:x-amz-acl: bucket-owner-full-control
+          - Sid: DenyInsecureTransport
+            Effect: Deny
+            Principal: "*"
+            Action: s3:*
+            Resource:
+              - !GetAtt AccessLogBucket.Arn
+              - !Sub "${AccessLogBucket.Arn}/*"
+            Condition:
+              Bool:
+                aws:SecureTransport: false
+
   LoadBalancer:
     Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    # 버킷 정책이 없으면 ALB 가 접근 로그 설정을 거부한다(Access Denied).
+    # CloudFormation 은 둘을 병렬로 만들려 하므로 순서를 명시해야 한다.
+    DependsOn: AccessLogBucketPolicy
     Properties:
       Name: !Sub "${ProjectName}-${Environment}-alb"
       Type: application
@@ -981,6 +1065,12 @@ Resources:
           Value: "60"
         - Key: routing.http.drop_invalid_header_fields.enabled
           Value: "true"
+        - Key: access_logs.s3.enabled
+          Value: "true"
+        - Key: access_logs.s3.bucket
+          Value: !Ref AccessLogBucket
+        - Key: access_logs.s3.prefix
+          Value: alb
       Tags:
         - Key: Project
           Value: !Ref ProjectName
@@ -1324,6 +1414,41 @@ Resources:
       Threshold: 0
       ComparisonOperator: GreaterThanThreshold
       TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref AlarmTopic
+
+  # 위 알람은 완전 중단을 잡지 못한다. 태스크가 아예 없으면 타깃이 0개이고
+  # UnHealthyHostCount 도 0 이거나 미보고여서, 임계값 0 초과 조건이 성립하지
+  # 않는다. 즉 서비스가 완전히 죽은 상태가 가장 조용하다.
+  #
+  # HealthyHostCount 를 쓰는 이유는 ECS RunningTaskCount 가 Container Insights
+  # 네임스페이스에 있어 이 구성(insights 비활성)에서는 발행되지 않기 때문이다.
+  # 그리고 "프로세스가 산다" 보다 "요청을 받을 수 있는 타깃이 있다" 가 고객이
+  # 체감하는 상태에 더 가깝다. ALB 지표라 추가 비용도 없다.
+  #
+  # TreatMissingData 를 breaching 으로 둔다. notBreaching 이면 지표가 아예
+  # 사라진 경우를 정상으로 보아 같은 맹점이 생긴다. 최초 배포 중 일시적
+  # 경보를 피하려고 3회 연속을 요구한다.
+  AlarmNoHealthyTargets:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "${ProjectName}-${Environment}-no-healthy-targets"
+      AlarmDescription: >-
+        정상 타깃이 하나도 없다. 서비스가 완전히 중단된 상태다.
+      Namespace: AWS/ApplicationELB
+      MetricName: HealthyHostCount
+      Dimensions:
+        - Name: LoadBalancer
+          Value: !GetAtt LoadBalancer.LoadBalancerFullName
+        - Name: TargetGroup
+          Value: !GetAtt TargetGroup.TargetGroupFullName
+      Statistic: Minimum
+      Period: 60
+      EvaluationPeriods: 3
+      DatapointsToAlarm: 3
+      Threshold: 1
+      ComparisonOperator: LessThanThreshold
+      TreatMissingData: breaching
       AlarmActions:
         - !Ref AlarmTopic
 

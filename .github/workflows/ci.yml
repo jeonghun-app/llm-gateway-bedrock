@@ -118,8 +118,15 @@ jobs:
 
       - name: 셸 스크립트 검증
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq shellcheck
+          # 러너 이미지에 shellcheck 가 이미 있다. 무조건 apt-get update 를
+          # 돌리면 러너에 등록된 서드파티 저장소(azure-cli 등) 장애가 이 잡을
+          # 실패시킨다. 실제로 그 저장소의 403 때문에 검증이 실행조차 되지
+          # 않은 일이 있었다. 없을 때만 설치하고, 목록 갱신 실패는 무시한다.
+          if ! command -v shellcheck >/dev/null 2>&1; then
+            sudo apt-get update -qq || true
+            sudo apt-get install -y -qq shellcheck
+          fi
+          shellcheck --version
           shellcheck scripts/*.sh
 
   secrets:

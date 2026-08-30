@@ -165,7 +165,7 @@ git clone <this repository>
 cd llm-gateway-bedrock
 
 ./scripts/deploy.sh --allowed-cidr "$(curl -s https://checkip.amazonaws.com)/32" \
-  --image ghcr.io/jeonghun-app/llm-gateway-bedrock:v1.13.2
+  --image ghcr.io/jeonghun-app/llm-gateway-bedrock:v1.14.0
 ```
 
 **Your data never leaves your AWS account.** The image is pulled from GitHub
@@ -189,8 +189,8 @@ recovery. For production, copy the image into your account and use that URI.
 ```bash
 # Once: copy the public image into your own ECR
 aws ecr create-repository --repository-name llmgw --region <region>
-docker pull ghcr.io/jeonghun-app/llm-gateway-bedrock:v1.13.2
-docker tag ghcr.io/jeonghun-app/llm-gateway-bedrock:v1.13.2 \
+docker pull ghcr.io/jeonghun-app/llm-gateway-bedrock:v1.14.0
+docker tag ghcr.io/jeonghun-app/llm-gateway-bedrock:v1.14.0 \
   <account-id>.dkr.ecr.<region>.amazonaws.com/llmgw:v1.10.0
 aws ecr get-login-password --region <region> \
   | docker login --username AWS --password-stdin <account-id>.dkr.ecr.<region>.amazonaws.com
@@ -413,6 +413,14 @@ curl -X POST "$GATEWAY_URL/admin/accounts/contoso/keys" \
 
 Budgets can be set at four levels — account, team, user, and key — and
 **exceeding any one of them** blocks the request with `429 insufficient_quota`.
+
+**This is not an exact ceiling.** The check reads accumulated cost at the moment
+the request arrives; it does not reserve the cost of the request being made. The
+number of response tokens cannot be known before the call. So a single expensive
+request can pass when only $0.01 of budget remains, and several concurrent
+requests can all pass after reading the same accumulated total. Treat the budget
+as "blocks subsequent requests once reached", and pair it with an RPM limit to
+bound the overshoot.
 Leaving a budget unset means unlimited, and in that case the gateway does not
 even issue the DynamoDB read used for the budget check.
 

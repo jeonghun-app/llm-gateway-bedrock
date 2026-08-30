@@ -56,6 +56,8 @@ UNPRICED_MODEL_POLICY=""
 # 이미 있는 이미지를 쓸 때 지정한다. 지정하면 ECR 스택 생성과 로컬 빌드를
 # 건너뛴다. Docker 를 쓸 수 없는 환경에서 설치하는 경로다.
 PREBUILT_IMAGE=""
+# 안내 문구에 쓰는 알람 개수. 템플릿에서 세어 하드코딩 표류를 막는다.
+ALARM_COUNT="$(grep -c "Type: AWS::CloudWatch::Alarm" "${REPO_ROOT}/infra/app.yaml" 2>/dev/null || echo "여러")"
 # public | private-nat. private-nat 은 태스크에 공인 IP 를 붙이지 않는 대신
 # NAT Gateway 비용이 붙는다.
 TASK_SUBNET_MODE=""
@@ -216,6 +218,24 @@ command -v jq  >/dev/null 2>&1 || die "jq 가 필요하다."
 
 # 사전 빌드 이미지를 쓰면 로컬 빌드가 없으므로 docker 를 요구하지 않는다.
 # 기업에서 개발자 PC 의 이미지 빌드를 막는 경우가 많아 이 경로가 필요하다.
+# prod 에서 HTTP 전용 배포를 기본으로 두지 않는다. 인증서가 없으면 API 키와
+# 관리 토큰이 인터넷 구간을 평문으로 지난다. dev 에서는 검증 편의를 위해
+# 허용하지만 prod 는 명시적 승인을 요구한다.
+if [[ "${ENVIRONMENT}" == "prod" && -z "${CERTIFICATE_ARN}" ]]; then
+    PLAINTEXT_PROD_OK="${PLAINTEXT_PROD_OK:-no}"
+    if [[ "${PLAINTEXT_PROD_OK}" != "yes" ]]; then
+        warn "prod 인데 ACM 인증서가 없다. HTTP 로만 서비스하면 API 키와 관리"
+        warn "토큰이 평문으로 전송된다."
+        warn "  인증서 지정:  --certificate-arn arn:aws:acm:...:certificate/..."
+        warn "  의도한 것이면: PLAINTEXT_PROD_OK=yes 를 지정해 다시 실행한다."
+        die "prod 평문 배포를 막았다"
+    fi
+    warn "PLAINTEXT_PROD_OK=yes 이므로 prod 를 HTTP 로 배포한다."
+elif [[ -z "${CERTIFICATE_ARN}" ]]; then
+    warn "인증서가 없어 HTTP 로만 서비스한다. API 키가 평문으로 전송되므로"
+    warn "검증 목적으로만 쓴다. 실사용 전에 --certificate-arn 으로 재배포한다."
+fi
+
 if [[ -n "${TASK_SUBNET_MODE}" && "${TASK_SUBNET_MODE}" != "public" \
       && "${TASK_SUBNET_MODE}" != "private-nat" ]]; then
     die "--task-subnet-mode 는 public 또는 private-nat 이어야 한다: ${TASK_SUBNET_MODE}"
@@ -389,6 +409,38 @@ optional_overrides+=("EcrRepositoryArn=${REPOSITORY_ARN}")
 [[ -n "${REQUEST_FILTERS}" ]] \
     && optional_overrides+=("RequestFilters=${REQUEST_FILTERS}")
 
+# ALB 접근 로그 버킷은 DeletionPolicy: Retain 이다. 사고 조사 자료를 스택
+# 삭제와 함께 잃지 않기 위한 선택이다. 그 대가로, 스택 업데이트가 롤백되면
+# 버킷만 남아(DELETE_SKIPPED) 다음 배포가 "이미 존재한다" 로 실패한다.
+# 이름이 고정이라 CloudFormation 이 새로 만들 수 없기 때문이다.
+#
+# 비어 있으면 잃을 로그가 없으므로 회수한다. 객체가 있으면 지우지 않고
+# 사람이 판단하게 한다.
+ALB_LOG_BUCKET="${PROJECT_NAME}-${ENVIRONMENT}-alb-logs-${ACCOUNT_ID}-${AWS_REGION}"
+if aws_cli s3api head-bucket --bucket "${ALB_LOG_BUCKET}" >/dev/null 2>&1; then
+    managed="$(aws_cli cloudformation describe-stack-resources \
+        --stack-name "${APP_STACK}" \
+        --logical-resource-id AccessLogBucket \
+        --query 'length(StackResources)' --output text 2>/dev/null || echo "0")"
+    if [[ "${managed}" == "0" ]]; then
+        object_count="$(aws_cli s3api list-objects-v2 \
+            --bucket "${ALB_LOG_BUCKET}" --max-items 1 \
+            --query 'length(Contents)' --output text 2>/dev/null || echo "0")"
+        if [[ "${object_count}" == "0" || "${object_count}" == "None" ]]; then
+            info "이전 롤백으로 남은 빈 접근 로그 버킷을 회수한다."
+            aws_cli s3api delete-bucket --bucket "${ALB_LOG_BUCKET}" >/dev/null 2>&1 \
+                || warn "버킷 삭제에 실패했다: ${ALB_LOG_BUCKET}"
+        else
+            warn "접근 로그 버킷이 스택 밖에 있고 로그가 들어 있다:"
+            warn "  ${ALB_LOG_BUCKET}"
+            warn "이 상태로는 배포가 실패한다. 로그를 보관하려면 다른 곳으로"
+            warn "옮긴 뒤 버킷을 지우고 다시 실행한다."
+            warn "  aws s3 sync s3://${ALB_LOG_BUCKET} ./alb-logs-backup/"
+            die "접근 로그 버킷 충돌"
+        fi
+    fi
+fi
+
 # CloudFormation 은 본문으로 직접 넘기는 템플릿을 51,200 바이트로 제한한다.
 # app.yaml 이 그 한도에 도달했다(v1.12.1 에서 여유가 75 바이트였다). S3 를
 # 경유하면 한도가 1MB 로 올라가므로 앞으로 기능을 더해도 다시 막히지 않는다.
@@ -528,6 +580,31 @@ info "현재 허용: ${ALLOWED_SUMMARY:-(없음)}"
 # 5. 서비스 준비 대기
 # ---------------------------------------------------------------------------
 log "5/7 서비스 기동 대기"
+
+# CloudFormation 이 ECS 서비스 안정화를 기다리지만, 그것만으로는 서비스가
+# 우리가 방금 만든 태스크 정의로 돌고 있는지 알 수 없다. 명시적으로 확인해야
+# 스모크 테스트가 구버전을 검사하는 일이 없고, 실패 시 원인도 분명해진다.
+if aws_cli ecs wait services-stable \
+    --cluster "${CLUSTER_NAME}" --services "${SERVICE_NAME}" 2>/dev/null; then
+    rollout="$(aws_cli ecs describe-services \
+        --cluster "${CLUSTER_NAME}" --services "${SERVICE_NAME}" \
+        --query "services[0].deployments[?status=='PRIMARY'].rolloutState" \
+        --output text 2>/dev/null || echo "UNKNOWN")"
+    running_image="$(aws_cli ecs describe-task-definition \
+        --task-definition "${SERVICE_NAME}" \
+        --query 'taskDefinition.containerDefinitions[0].image' \
+        --output text 2>/dev/null || echo "확인 실패")"
+    info "롤아웃 ${rollout} · 이미지 ${running_image}"
+    if [[ "${running_image}" != "${IMAGE_URI}" ]]; then
+        warn "실행 중인 이미지가 방금 지정한 것과 다르다."
+        warn "  지정: ${IMAGE_URI}"
+        warn "  실행: ${running_image}"
+    fi
+else
+    warn "services-stable 대기가 끝나지 않았다. 태스크가 기동에 실패할 수 있다."
+    warn "태스크 로그: aws logs tail ${LOG_GROUP} --region ${AWS_REGION} --since 10m"
+fi
+
 ready="no"
 for attempt in $(seq 1 60); do
     code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 \
@@ -545,6 +622,48 @@ if [[ "${ready}" != "yes" ]]; then
     warn "현재 허용 목록: ${ALLOWED_SUMMARY:-(없음)}"
     warn "이 단말을 추가: ./scripts/manage_access.sh add-me --env ${ENVIRONMENT} --region ${AWS_REGION}"
     warn "태스크 로그: aws logs tail ${LOG_GROUP} --region ${AWS_REGION} --since 10m"
+fi
+
+# 알람이 아무에게도 가지 않는 상태를 조용히 넘기지 않는다. 알람 5개를 만들어
+# 두고 구독이 없으면 장애가 나도 사람이 모른다. BYOC 라 우리가 대신 감시할 수
+# 없으므로 이 확인이 유일한 방어선이다.
+#
+# 이메일 구독은 수신자가 확인 링크를 눌러야 활성화된다. PendingConfirmation
+# 상태는 확정으로 세지 않는다. 누르지 않은 구독은 알림을 받지 못한다.
+alarm_topic="$(stack_output "${APP_STACK}" AlarmTopicArn 2>/dev/null || true)"
+if [[ -n "${alarm_topic}" ]]; then
+    confirmed="$(aws_cli sns list-subscriptions-by-topic \
+        --topic-arn "${alarm_topic}" \
+        --query "length(Subscriptions[?SubscriptionArn!='PendingConfirmation'])" \
+        --output text 2>/dev/null || echo "0")"
+    pending="$(aws_cli sns list-subscriptions-by-topic \
+        --topic-arn "${alarm_topic}" \
+        --query "length(Subscriptions[?SubscriptionArn=='PendingConfirmation'])" \
+        --output text 2>/dev/null || echo "0")"
+    if [[ "${confirmed}" -gt 0 ]]; then
+        info "알람 수신자 ${confirmed}명 확정 (대기 ${pending}건)"
+    elif [[ "${pending}" -gt 0 ]]; then
+        warn "알람 구독 ${pending}건이 확인 대기 중이다. 수신자가 확인 메일의"
+        warn "링크를 눌러야 알림이 간다. 그때까지 알람은 아무에게도 가지 않는다."
+    else
+        warn "알람을 받을 사람이 없다. 알람 ${ALARM_COUNT}개가 울려도 아무도 모른다."
+        warn "  이메일 추가:  ./scripts/deploy.sh --alarm-email ops@example.com ..."
+        warn "  다른 채널:    aws sns subscribe --topic-arn ${alarm_topic} \\"
+        warn "                  --protocol https --notification-endpoint <URL>"
+        if [[ "${ENVIRONMENT}" == "prod" ]]; then
+            # prod 에서는 무관측 운영을 기본값으로 두지 않는다. 스택은 이미
+            # 만들어졌으므로 지우지 않는다. 이메일 확인은 비동기라서 나중에
+            # 확정될 수 있고, 여기서 삭제하면 확인 링크가 무효가 된다.
+            UNROUTED_ALARMS_OK="${UNROUTED_ALARMS_OK:-no}"
+            if [[ "${UNROUTED_ALARMS_OK}" != "yes" ]]; then
+                warn ""
+                warn "prod 환경이라 이 상태를 실패로 처리한다. 리소스는 그대로 두었다."
+                warn "의도한 것이라면 UNROUTED_ALARMS_OK=yes 를 지정해 다시 실행한다."
+                exit 1
+            fi
+            warn "UNROUTED_ALARMS_OK=yes 이므로 계속 진행한다."
+        fi
+    fi
 fi
 
 # ---------------------------------------------------------------------------
