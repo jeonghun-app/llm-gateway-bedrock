@@ -20,36 +20,159 @@ import pydantic
 _SUPPORTED_CHOICE_COUNT = 1
 
 
+class ImageUrl(pydantic.BaseModel):
+    """이미지 조각의 URL 정보.
+
+    Attributes:
+        url: `data:image/<형식>;base64,<페이로드>` 형태의 데이터 URL.
+            원격 `http(s)://` URL 은 게이트웨이가 거부한다.
+        detail: OpenAI 호환용 필드. Converse 에 대응이 없어 무시한다.
+    """
+
+    model_config = pydantic.ConfigDict(extra="allow")
+
+    url: str = ""
+    detail: str = "auto"
+
+
 class ContentPart(pydantic.BaseModel):
     """메시지 본문 조각.
 
     Attributes:
-        type: 조각 종류. `text` 만 지원한다.
+        type: 조각 종류. `text` 와 `image_url` 을 지원한다.
         text: 텍스트 내용.
+        image_url: 이미지 조각의 URL 정보.
     """
 
     model_config = pydantic.ConfigDict(extra="allow")
 
     type: str = "text"
     text: str = ""
+    image_url: ImageUrl | None = None
 
     def is_text(self) -> bool:
-        """텍스트 조각이면 True.
-
-        OpenAI 는 `image_url`, `input_audio` 같은 종류도 정의한다. Bedrock
-        Converse 는 그에 대응하는 content block 을 지원하지만 이 게이트웨이는
-        아직 변환하지 않는다.
-        """
+        """텍스트 조각이면 True."""
         return self.type == "text"
+
+    def is_image(self) -> bool:
+        """이미지 조각이면 True."""
+        return self.type == "image_url"
+
+    def is_supported(self) -> bool:
+        """게이트웨이가 Bedrock 으로 전달할 수 있는 조각이면 True.
+
+        OpenAI 는 `input_audio`, `file` 같은 종류도 정의한다. Converse 에
+        대응이 있더라도 이 게이트웨이가 변환하지 않는 것은 거부한다.
+        """
+        return self.is_text() or self.is_image()
+
+
+class ToolFunctionDef(pydantic.BaseModel):
+    """도구로 노출할 함수 정의.
+
+    Attributes:
+        name: 함수 이름.
+        description: 함수 설명. 모델이 호출 여부를 판단하는 근거다.
+        parameters: JSON Schema 로 표현한 인자 스펙.
+    """
+
+    model_config = pydantic.ConfigDict(extra="allow")
+
+    name: str = pydantic.Field(min_length=1, max_length=64)
+    description: str = ""
+    parameters: dict[str, typing.Any] = pydantic.Field(default_factory=dict)
+
+
+class ToolDef(pydantic.BaseModel):
+    """요청이 노출하는 도구 하나.
+
+    Attributes:
+        type: `function` 만 지원한다.
+        function: 함수 정의.
+    """
+
+    model_config = pydantic.ConfigDict(extra="allow")
+
+    type: str = "function"
+    function: ToolFunctionDef
+
+
+class ToolCallFunction(pydantic.BaseModel):
+    """도구 호출의 함수 부분.
+
+    Attributes:
+        name: 호출할 함수 이름.
+        arguments: 인자. OpenAI 규약대로 **JSON 문자열**이다.
+    """
+
+    model_config = pydantic.ConfigDict(extra="allow")
+
+    name: str = ""
+    arguments: str = ""
+
+
+class ToolCall(pydantic.BaseModel):
+    """어시스턴트가 요청한 도구 호출 하나.
+
+    Attributes:
+        id: 도구 호출 식별자. 도구 결과 메시지가 이 값을 참조한다.
+        type: `function` 만 지원한다.
+        function: 함수 이름과 인자.
+    """
+
+    model_config = pydantic.ConfigDict(extra="allow")
+
+    id: str = ""
+    type: str = "function"
+    function: ToolCallFunction = pydantic.Field(
+        default_factory=ToolCallFunction
+    )
+
+
+class JsonSchemaSpec(pydantic.BaseModel):
+    """`response_format` 의 JSON Schema 명세.
+
+    Attributes:
+        name: 스키마 이름. Converse 도구 이름으로 쓰인다.
+        json_schema: 실제 JSON Schema. OpenAI 는 `schema` 라는 이름을 쓰지만
+            pydantic `BaseModel.schema` 와 충돌해 별칭으로 받는다.
+        strict: OpenAI 호환용. 받아들이지만 **게이트웨이가 스키마 준수를
+            검증하지는 않는다.** 스키마를 도구 입력으로 넘겨 모델이
+            지키게 하는 것이고, 결과를 다시 대조하지는 않는다.
+    """
+
+    model_config = pydantic.ConfigDict(extra="allow", populate_by_name=True)
+
+    name: str = "structured_output"
+    json_schema: dict[str, typing.Any] = pydantic.Field(
+        default_factory=dict, alias="schema"
+    )
+    strict: bool = True
+
+
+class ResponseFormat(pydantic.BaseModel):
+    """구조화 출력 지정.
+
+    Attributes:
+        type: `text`, `json_object`, `json_schema` 중 하나.
+        json_schema: `json_schema` 일 때의 스키마 명세.
+    """
+
+    model_config = pydantic.ConfigDict(extra="allow")
+
+    type: str = "text"
+    json_schema: JsonSchemaSpec | None = None
 
 
 class ChatMessage(pydantic.BaseModel):
     """대화 메시지 한 건.
 
     Attributes:
-        role: `system`, `developer`, `user`, `assistant` 중 하나.
-        content: 문자열 또는 텍스트 조각 배열.
+        role: `system`, `developer`, `user`, `assistant`, `tool` 중 하나.
+        content: 문자열 또는 조각 배열.
         name: OpenAI 호환용 선택 필드. 변환에는 쓰지 않는다.
+        tool_calls: 어시스턴트가 요청한 도구 호출 목록.
+        tool_call_id: `role="tool"` 메시지가 응답하는 도구 호출 ID.
     """
 
     model_config = pydantic.ConfigDict(extra="allow")
@@ -57,14 +180,16 @@ class ChatMessage(pydantic.BaseModel):
     role: str
     content: str | list[ContentPart] | None = None
     name: str | None = None
+    tool_calls: list[ToolCall] | None = None
+    tool_call_id: str | None = None
 
     def unsupported_part_types(self) -> tuple[str, ...]:
         """지원하지 않는 조각 종류를 중복 없이 반환한다.
 
-        이 검사가 필요한 이유는 `text()` 가 텍스트가 아닌 조각을 **조용히
-        버리기** 때문이다. 이미지를 보낸 클라이언트가 텍스트만 전달된 응답을
-        받으면, 모델이 이미지를 보고 답한 것으로 오해한다. 조용히 버리는 것보다
-        거부하는 편이 정직하다.
+        이 검사가 필요한 이유는 `text()` 가 지원하지 않는 조각을 **조용히
+        버리기** 때문이다. 그런 조각을 보낸 클라이언트가 텍스트만 전달된
+        응답을 받으면, 모델이 그것을 보고 답한 것으로 오해한다. 조용히
+        버리는 것보다 거부하는 편이 정직하다.
 
         Returns:
             지원하지 않는 `type` 값 튜플. 모두 지원하면 빈 튜플.
@@ -73,12 +198,26 @@ class ChatMessage(pydantic.BaseModel):
             return ()
         seen: list[str] = []
         for part in self.content:
-            if not part.is_text() and part.type not in seen:
+            if not part.is_supported() and part.type not in seen:
                 seen.append(part.type)
         return tuple(seen)
 
+    def image_parts(self) -> tuple[ImageUrl, ...]:
+        """이미지 조각을 순서대로 반환한다.
+
+        Returns:
+            이미지 조각 튜플. 없으면 빈 튜플.
+        """
+        if not isinstance(self.content, list):
+            return ()
+        return tuple(
+            part.image_url
+            for part in self.content
+            if part.is_image() and part.image_url is not None
+        )
+
     def text(self) -> str:
-        """메시지 본문을 평평한 문자열로 만든다.
+        """메시지 본문의 텍스트만 평평한 문자열로 만든다.
 
         텍스트가 아닌 조각은 버린다. 호출 전에
         `unsupported_part_types()` 로 검증해야 한다.
@@ -90,7 +229,46 @@ class ChatMessage(pydantic.BaseModel):
             return ""
         if isinstance(self.content, str):
             return self.content
-        return "\n".join(part.text for part in self.content if part.text)
+        return "\n".join(
+            part.text for part in self.content if part.is_text() and part.text
+        )
+
+
+class EmbeddingRequest(pydantic.BaseModel):
+    """`POST /v1/embeddings` 요청 본문.
+
+    Attributes:
+        model: Bedrock 임베딩 모델 ID.
+        input: 임베딩할 텍스트. 문자열 또는 문자열 배열.
+        encoding_format: `float` 또는 `base64`. OpenAI 파이썬 클라이언트는
+            기본으로 `base64` 를 요청하므로 둘 다 구현한다.
+        dimensions: 출력 차원 수. 모델이 지원할 때만 의미가 있다.
+        user: 호출자 식별 문자열. 사용량은 API 키로 귀속되므로 무시한다.
+    """
+
+    model_config = pydantic.ConfigDict(extra="allow")
+
+    model: str = pydantic.Field(min_length=1)
+    input: str | list[str]
+    encoding_format: typing.Literal["float", "base64"] = "float"
+    dimensions: int | None = pydantic.Field(default=None, ge=1, le=8192)
+    user: str | None = None
+
+    def texts(self) -> list[str]:
+        """입력을 문자열 목록으로 정규화한다.
+
+        Returns:
+            임베딩할 텍스트 목록.
+
+        Raises:
+            ValueError: 입력이 비어 있는 경우.
+        """
+        items = (
+            [self.input] if isinstance(self.input, str) else list(self.input)
+        )
+        if not items or all(not item for item in items):
+            raise ValueError("input 이 비어 있다.")
+        return items
 
 
 class ChatCompletionRequest(pydantic.BaseModel):
@@ -108,6 +286,13 @@ class ChatCompletionRequest(pydantic.BaseModel):
         stream: SSE 스트리밍 여부.
         n: 생성할 후보 수. 1만 지원한다.
         user: 호출자 식별 문자열. 사용량은 API 키로 귀속되므로 무시한다.
+        tools: 모델에 노출할 도구 목록.
+        tool_choice: 도구 선택 전략. `auto`, `required`, 또는
+            `{"type":"function","function":{"name":...}}`. `none` 은 Converse
+            에 대응이 없어 거부한다.
+        parallel_tool_calls: OpenAI 호환 필드. Converse 에 대응 스위치가 없어
+            `false` 는 거부한다.
+        response_format: 구조화 출력 지정.
     """
 
     model_config = pydantic.ConfigDict(extra="allow")
@@ -124,6 +309,10 @@ class ChatCompletionRequest(pydantic.BaseModel):
     stream: bool = False
     n: int = pydantic.Field(default=_SUPPORTED_CHOICE_COUNT, ge=1, le=1)
     user: str | None = None
+    tools: list[ToolDef] | None = None
+    tool_choice: str | dict[str, typing.Any] | None = None
+    parallel_tool_calls: bool | None = None
+    response_format: ResponseFormat | None = None
 
     @property
     def effective_max_tokens(self) -> int | None:

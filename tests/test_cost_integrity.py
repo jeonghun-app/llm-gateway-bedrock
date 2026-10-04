@@ -145,7 +145,7 @@ def test_예산보유판정은네계층중하나라도있으면참이다() -> No
 # ---------------------------------------------------------------------------
 
 
-def test_이미지조각은거부되고bedrock을호출하지않는다(
+def test_원격URL이미지는거부되고bedrock을호출하지않는다(
     client: testclient.TestClient, api_key: str, fake_bedrock: typing.Any
 ) -> None:
     fake_bedrock.last_call = None
@@ -163,9 +163,65 @@ def test_이미지조각은거부되고bedrock을호출하지않는다(
         ],
     )
     assert response.status_code == 400
-    assert "image_url" in response.json()["error"]["message"]
+    # 게이트웨이가 클라이언트가 준 URL 을 대신 가져오면 SSRF 통로가 된다.
+    assert "base64" in response.json()["error"]["message"]
     # 형식 오류는 비용이 발생하기 전에 걸러야 한다.
     assert fake_bedrock.last_call is None
+
+
+def test_지원하지않는조각종류는거부되고bedrock을호출하지않는다(
+    client: testclient.TestClient, api_key: str, fake_bedrock: typing.Any
+) -> None:
+    fake_bedrock.last_call = None
+    response = _chat(
+        client,
+        api_key,
+        messages=[
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "이 소리를 설명해줘"},
+                    {"type": "input_audio", "input_audio": {"data": "x"}},
+                ],
+            }
+        ],
+    )
+    assert response.status_code == 400
+    assert "input_audio" in response.json()["error"]["message"]
+    assert fake_bedrock.last_call is None
+
+
+def test_base64이미지는이미지블록으로전달된다(
+    client: testclient.TestClient, api_key: str, fake_bedrock: typing.Any
+) -> None:
+    # 1x1 PNG.
+    png = (
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8"
+        "z8DwHwAFAAH/q842iQAAAABJRU5ErkJggg=="
+    )
+    response = _chat(
+        client,
+        api_key,
+        messages=[
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "이 그림을 설명해줘"},
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": f"data:image/png;base64,{png}"},
+                    },
+                ],
+            }
+        ],
+    )
+    assert response.status_code == 200
+    blocks = fake_bedrock.last_call["messages"][0]["content"]
+    image_blocks = [block for block in blocks if "image" in block]
+    assert len(image_blocks) == 1
+    assert image_blocks[0]["image"]["format"] == "png"
+    # Converse 는 base64 문자열이 아니라 원시 바이트를 받는다.
+    assert isinstance(image_blocks[0]["image"]["source"]["bytes"], bytes)
 
 
 def test_텍스트조각만있으면통과한다(

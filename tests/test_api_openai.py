@@ -16,6 +16,7 @@ import pytest
 import conftest
 from llmgw import domain
 from llmgw import repository
+from llmgw import translate
 
 
 def test_healthz_인증없이200을반환한다(
@@ -586,3 +587,156 @@ def test_chat_completions_단가없는모델_요청은성공하고비용0으로�
     assert len(records) == 1
     assert bool(records[0]["pricing_known"]) is False
     assert decimal.Decimal(str(records[0]["cost_usd"])) == 0
+
+
+# ---------------------------------------------------------------------------
+# 도구 사용 · 구조화 출력 종단간
+# ---------------------------------------------------------------------------
+
+
+def test_도구호출응답을OpenAI형식으로돌려준다(
+    client: testclient.TestClient, api_key: str, fake_bedrock: typing.Any
+) -> None:
+    # Arrange: 모델이 도구를 호출한 상황을 재현한다.
+    fake_bedrock.tool_calls = (
+        translate.ToolUse("tu_1", "get_weather", '{"city": "서울"}'),
+    )
+    fake_bedrock.stop_reason = "tool_use"
+
+    # Act
+    response = client.post(
+        "/v1/chat/completions",
+        headers={"Authorization": f"Bearer {api_key}"},
+        json={
+            "model": "amazon.nova-lite-v1:0",
+            "messages": [{"role": "user", "content": "서울 날씨"}],
+            "tools": [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "get_weather",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {"city": {"type": "string"}},
+                        },
+                    },
+                }
+            ],
+        },
+    )
+
+    # Assert
+    assert response.status_code == 200
+    choice = response.json()["choices"][0]
+    assert choice["finish_reason"] == "tool_calls"
+    assert choice["message"]["content"] is None
+    call = choice["message"]["tool_calls"][0]
+    assert call["id"] == "tu_1"
+    assert call["function"]["name"] == "get_weather"
+    assert json.loads(call["function"]["arguments"]) == {"city": "서울"}
+
+
+def test_도구결과를보내면대화가이어진다(
+    client: testclient.TestClient, api_key: str, fake_bedrock: typing.Any
+) -> None:
+    # Arrange: 두 번째 호출은 도구 결과를 받아 텍스트로 답한다.
+    fake_bedrock.tool_calls = ()
+    fake_bedrock.stop_reason = "end_turn"
+
+    # Act
+    response = client.post(
+        "/v1/chat/completions",
+        headers={"Authorization": f"Bearer {api_key}"},
+        json={
+            "model": "amazon.nova-lite-v1:0",
+            "messages": [
+                {"role": "user", "content": "서울 날씨"},
+                {
+                    "role": "assistant",
+                    "content": None,
+                    "tool_calls": [
+                        {
+                            "id": "tu_1",
+                            "type": "function",
+                            "function": {
+                                "name": "get_weather",
+                                "arguments": '{"city": "서울"}',
+                            },
+                        }
+                    ],
+                },
+                {"role": "tool", "tool_call_id": "tu_1", "content": "맑음"},
+            ],
+        },
+    )
+
+    # Assert
+    assert response.status_code == 200
+    messages = fake_bedrock.last_call["messages"]
+    # user → assistant(toolUse) → user(toolResult) 세 턴이 되어야 한다.
+    assert [m["role"] for m in messages] == ["user", "assistant", "user"]
+    assert "toolResult" in messages[2]["content"][0]
+
+
+def test_구조화출력은합성도구를숨기고본문JSON을준다(
+    client: testclient.TestClient, api_key: str, fake_bedrock: typing.Any
+) -> None:
+    # Arrange
+    fake_bedrock.tool_calls = (
+        translate.ToolUse("tu_1", "answer", '{"city": "서울"}'),
+    )
+    fake_bedrock.stop_reason = "tool_use"
+
+    # Act
+    response = client.post(
+        "/v1/chat/completions",
+        headers={"Authorization": f"Bearer {api_key}"},
+        json={
+            "model": "amazon.nova-lite-v1:0",
+            "messages": [{"role": "user", "content": "서울 날씨"}],
+            "response_format": {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "answer",
+                    "schema": {
+                        "type": "object",
+                        "properties": {"city": {"type": "string"}},
+                    },
+                },
+            },
+        },
+    )
+
+    # Assert
+    assert response.status_code == 200
+    choice = response.json()["choices"][0]
+    # 합성 도구는 클라이언트에 노출하지 않는다. OpenAI 와 같은 계약이다.
+    assert "tool_calls" not in choice["message"]
+    assert choice["finish_reason"] == "stop"
+    assert json.loads(choice["message"]["content"]) == {"city": "서울"}
+
+
+def test_구조화출력에서모델이스키마를채우지않으면오류다(
+    client: testclient.TestClient, api_key: str, fake_bedrock: typing.Any
+) -> None:
+    # 조용히 빈 본문을 주면 클라이언트가 스키마를 지킨 결과로 오해한다.
+    fake_bedrock.tool_calls = ()
+    fake_bedrock.stop_reason = "end_turn"
+
+    response = client.post(
+        "/v1/chat/completions",
+        headers={"Authorization": f"Bearer {api_key}"},
+        json={
+            "model": "amazon.nova-lite-v1:0",
+            "messages": [{"role": "user", "content": "서울 날씨"}],
+            "response_format": {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "answer",
+                    "schema": {"type": "object", "properties": {}},
+                },
+            },
+        },
+    )
+
+    assert response.status_code >= 500

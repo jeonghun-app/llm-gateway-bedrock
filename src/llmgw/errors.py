@@ -21,6 +21,13 @@ class GatewayError(Exception):
         error_type: OpenAI 규약의 `error.type` 값.
         code: 기계가 판별할 수 있는 세부 코드.
         message: 사람이 읽는 설명. 시크릿과 PII를 넣지 않는다.
+        consumed_input_tokens: 실패하기 **전에 이미 소비된** 입력 토큰 수.
+
+            배치 요청(임베딩)은 한 HTTP 요청이 여러 번의 업스트림 호출로
+            나뉜다. 3번째에서 실패하면 앞의 2번은 이미 청구됐다. 그 토큰을
+            0 으로 기록하면 비용이 집계에서 사라지고, 월 예산이 그만큼
+            늦게 걸린다. 마지막 입력만 실패하게 만들면 예산을 무한히
+            우회할 수 있으므로 통제 우회다.
     """
 
     status_code: int = http.HTTPStatus.INTERNAL_SERVER_ERROR
@@ -30,6 +37,7 @@ class GatewayError(Exception):
     def __init__(self, message: str) -> None:
         super().__init__(message)
         self.message = message
+        self.consumed_input_tokens: int = 0
 
     def to_payload(self) -> dict[str, dict[str, str]]:
         """OpenAI 호환 에러 본문을 만든다.

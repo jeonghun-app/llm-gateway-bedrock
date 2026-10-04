@@ -76,9 +76,9 @@ flowchart TD
 | `usage.py` | 비용 계산, 사용량 기록, 메트릭 발행 |
 | `analytics.py` | 집계 테이블 조회와 축별 합산 |
 | `pricing.py` | 단가 표, 모델 ID 정규화, 비용 계산 |
-| `translate.py` | OpenAI ↔ Bedrock Converse 변환 (순수 함수) |
+| `translate.py` | OpenAI ↔ Bedrock Converse 변환 (순수 함수). 도구·이미지·구조화 출력 매핑 포함 |
 | `repository.py` | DynamoDB 접근. boto3 호출이 여기와 `bedrock.py` 에만 존재 |
-| `bedrock.py` | Converse / ConverseStream, 에러 → 도메인 예외 변환 |
+| `bedrock.py` | Converse / ConverseStream, 임베딩(`InvokeModel`), 에러 → 도메인 예외 변환 |
 | `observability.py` | JSON 로거(상관관계 ID), EMF 메트릭 |
 | `cache.py` | 계정·팀·사용자 메타데이터 TTL 캐시 (기본 30초) |
 | `clock.py` | 시간·ID 주입. 테스트에서 `sleep` 없이 고정 |

@@ -115,7 +115,7 @@ sequenceDiagram
 | 데이터 | DynamoDB 3개 (온디맨드, PITR, SSE-KMS) |
 | 시크릿 | Secrets Manager (토큰 자동 생성) |
 | 레지스트리 | ECR (스캔 온 푸시, 태그 불변) |
-| 관측 | CloudWatch Logs, EMF 커스텀 메트릭, 알람 4개, SNS |
+| 관측 | CloudWatch Logs, EMF 커스텀 메트릭, 알람 6개, SNS |
 | 네트워크 | 전용 VPC, IGW, S3/DynamoDB 게이트웨이 엔드포인트 |
 | IaC | CloudFormation 2스택 |
 
@@ -161,7 +161,7 @@ git clone <이 리포지토리>
 cd llm-gateway-bedrock
 
 ./scripts/deploy.sh --allowed-cidr "$(curl -s https://checkip.amazonaws.com)/32" \
-  --image ghcr.io/jeonghun-app/llm-gateway-bedrock:v2.1.1
+  --image ghcr.io/jeonghun-app/llm-gateway-bedrock:v2.2.0
 ```
 
 **데이터는 당신의 AWS 계정을 벗어나지 않는다.** 이미지를 GitHub Container
@@ -179,7 +179,7 @@ Registry 에서 받아오지만, 그것은 배포 리전과 무관하다. 게이
 
 ```bash
 gh attestation verify \
-  oci://ghcr.io/jeonghun-app/llm-gateway-bedrock:v2.1.1 \
+  oci://ghcr.io/jeonghun-app/llm-gateway-bedrock:v2.2.0 \
   --repo jeonghun-app/llm-gateway-bedrock
 ```
 
@@ -203,17 +203,17 @@ Fargate 는 태스크를 띄울 때마다 이미지를 새로 받는다(호스�
 ```bash
 # 한 번만: 공개 이미지를 계정 내 ECR 로 복사
 aws ecr create-repository --repository-name llmgw --region <리전>
-docker pull ghcr.io/jeonghun-app/llm-gateway-bedrock:v2.1.1
-docker tag ghcr.io/jeonghun-app/llm-gateway-bedrock:v2.1.1 \
-  <계정ID>.dkr.ecr.<리전>.amazonaws.com/llmgw:v1.10.0
+docker pull ghcr.io/jeonghun-app/llm-gateway-bedrock:v2.2.0
+docker tag ghcr.io/jeonghun-app/llm-gateway-bedrock:v2.2.0 \
+  <계정ID>.dkr.ecr.<리전>.amazonaws.com/llmgw:v2.2.0
 aws ecr get-login-password --region <리전> \
   | docker login --username AWS --password-stdin <계정ID>.dkr.ecr.<리전>.amazonaws.com
-docker push <계정ID>.dkr.ecr.<리전>.amazonaws.com/llmgw:v1.10.0
+docker push <계정ID>.dkr.ecr.<리전>.amazonaws.com/llmgw:v2.2.0
 
 # 배포. EcrRepositoryArn 을 주면 태스크 실행 역할의 pull 권한이 그 리포지토리로
 # 좁혀진다.
 ./scripts/deploy.sh --allowed-cidr <IP>/32 \
-  --image <계정ID>.dkr.ecr.<리전>.amazonaws.com/llmgw:v1.10.0
+  --image <계정ID>.dkr.ecr.<리전>.amazonaws.com/llmgw:v2.2.0
 ```
 
 ### 소스에서 빌드 (기여자)
@@ -485,7 +485,8 @@ ID 로 재시도하면 호출 횟수만큼 집계된다.
 
 | 메서드 | 경로 | 인증 | 설명 |
 |---|---|---|---|
-| `POST` | `/v1/chat/completions` | API 키 | 채팅 완성 (스트리밍 지원) |
+| `POST` | `/v1/chat/completions` | API 키 | 채팅 완성 (스트리밍·도구·비전·구조화 출력) |
+| `POST` | `/v1/embeddings` | API 키 | 텍스트 임베딩 (Titan 계열) |
 | `GET` | `/v1/models` | API 키 | 키가 쓸 수 있는 모델 목록 |
 | `GET` | `/healthz` | 없음 | 얕은 헬스 체크 (ALB 용) |
 | `GET` | `/readyz` | 없음 | DynamoDB·Bedrock 접근 확인 |
@@ -498,8 +499,128 @@ ID 로 재시도하면 호출 횟수만큼 집계된다.
 `/docs` 에서 대화형으로 볼 수 있다.
 
 OpenAI 스펙 중 Bedrock Converse 에 대응이 없는 필드(`presence_penalty`,
-`logit_bias` 등)는 받아들이되 무시한다. 결과가 달라지는 `n > 1` 은 명시적으로
-거부한다.
+`logit_bias` 등)는 받아들이되 무시한다. **결과가 달라지는 것은 무시하지 않고
+거부한다.** 받아들이고 다르게 동작하면 지켜지지 않는 약속이 되기 때문이다.
+
+| 요청 | 처리 |
+|---|---|
+| `n > 1` | 거부. Converse 는 후보를 하나만 반환한다 |
+| `tool_choice: "none"` | 거부. Converse 에 대응 값이 없다. 도구를 쓰지 않으려면 `tools` 를 보내지 않는다 |
+| `parallel_tool_calls: false` | 거부. Converse 에 병렬 호출을 끄는 스위치가 없다 |
+| `response_format: json_object` | 거부. 스키마가 없으면 강제할 수단이 없다. `json_schema` 를 쓴다 |
+| `response_format: json_schema` + `stream` | 거부. 구조화 출력은 강제 도구 호출로 구현해 증분 텍스트가 없다 |
+| 원격 URL 이미지 | 거부. 게이트웨이가 대신 가져오면 SSRF 통로가 된다. base64 로 보낸다 |
+| `image_url.detail` | 무시. Converse 에 대응이 없다 |
+| system/developer 메시지의 이미지 | 거부. Converse 의 `system` 은 텍스트만 받는다 |
+| `role="tool"` 메시지의 이미지 | 거부. 도구 결과는 텍스트로만 전달한다 |
+| 요청당 이미지 8장 또는 총 18MB 초과 | 거부. 태스크 메모리 보호 |
+
+### 도구 사용 (function calling)
+
+`tools` 와 `tool_choice` 를 Converse `toolConfig` 로 변환한다. 응답의
+`tool_calls`, 도구 결과 메시지(`role: "tool"`), 스트리밍 델타를 모두 지원하므로
+LangChain 같은 에이전트 프레임워크가 그대로 붙는다.
+
+```python
+response = client.chat.completions.create(
+    model="amazon.nova-lite-v1:0",
+    messages=[{"role": "user", "content": "서울 날씨 알려줘"}],
+    tools=[{
+        "type": "function",
+        "function": {
+            "name": "get_weather",
+            "description": "도시의 현재 날씨를 조회한다",
+            "parameters": {
+                "type": "object",
+                "properties": {"city": {"type": "string"}},
+                "required": ["city"],
+            },
+        },
+    }],
+)
+```
+
+도구 왕복은 **호출 한 번마다 별도 요청**이다. 각 요청이 독립적으로 집계되므로
+비용은 정확하지만, 이전 도구 결과를 매번 다시 보내기 때문에 입력 토큰이
+대화가 길어질수록 빠르게 늘어난다. 에이전트 루프에서는 월 예산이 예상보다
+빨리 소진될 수 있어 `rpm_limit` 을 함께 쓰기를 권한다.
+
+### 이미지 입력 (비전)
+
+base64 데이터 URL 로 보낸다. 지원 형식은 `png`, `jpeg`, `gif`, `webp` 이고
+이미지 하나당 디코딩 후 4.5MB 까지다.
+
+```python
+response = client.chat.completions.create(
+    model="us.anthropic.claude-sonnet-4-5-20250929-v1:0",
+    messages=[{
+        "role": "user",
+        "content": [
+            {"type": "text", "text": "이 그림을 설명해줘"},
+            {"type": "image_url",
+             "image_url": {"url": "data:image/png;base64,iVBORw0..."}},
+        ],
+    }],
+)
+```
+
+이미지 토큰은 Converse 가 `inputTokens` 에 합산해 돌려주므로 비용 집계와 예산
+검사가 그대로 정확하다.
+
+### 구조화 출력
+
+`response_format.type=json_schema` 를 지원한다. Converse 에 대응 필드가 없어
+스키마를 입력으로 받는 도구를 합성해 강제 호출하고, 그 입력을 본문 JSON 으로
+되돌린다. 합성 도구는 클라이언트에 노출되지 않는다.
+
+**한 가지 차이가 있다.** OpenAI 의 `strict` 는 스키마 준수를 보장하지만,
+이 게이트웨이는 스키마를 도구 입력으로 넘겨 모델이 지키게 하는 것이고
+돌아온 값을 스키마와 다시 대조하지는 않는다. 모델이 `required` 필드를
+빠뜨리면 그대로 전달된다. 엄격한 검증이 필요하면 클라이언트에서 한 번 더
+확인한다.
+
+모델이 강제 도구 호출(`toolChoice`)을 지원하지 않으면 실패한다. 조용히 빈
+본문을 돌려주면 스키마를 지킨 결과로 오해하게 되므로 오류로 만든다.
+
+**요청 필터 확장을 켠 경우** 도구·이미지 요청은 거부된다. 확장 v1 계약은 본문을
+문자열 하나로 표현해 이런 내용을 검사할 수 없고, 검사하지 못한 것을 통과시키면
+필터를 켠 의미가 없기 때문이다. 자세한 내용은
+[`docs/extensions-v1.md`](docs/extensions-v1.md) 를 본다.
+
+### 임베딩
+
+`POST /v1/embeddings` 를 Amazon Titan 임베딩 모델에 대해 지원한다.
+
+```python
+result = client.embeddings.create(
+    model="amazon.titan-embed-text-v2:0",
+    input=["첫 문장", "둘째 문장"],
+)
+```
+
+임베딩은 Converse 가 아니라 `InvokeModel` 을 쓰는 유일한 경로다. Converse 가
+임베딩 모델을 지원하지 않기 때문이다. 즉 모델 계열마다 본문 형태가 달라
+**입력 토큰 수를 실제로 보고하는 계열만 지원한다.** 토큰 수를 모르는 모델은
+비용이 0 으로 기록되고, 그러면 월 예산이 조용히 무효가 된다. Cohere 임베딩
+모델은 응답 형태를 확인하기 전까지 거부한다.
+
+출력 토큰은 항상 0 이고 그것이 정확하다. `pricing.json` 의 임베딩 모델은
+`output_per_1k_usd` 가 `0` 이라 입력 토큰만으로 비용이 정확히 계산된다.
+임베딩도 채팅과 같은 인증·레이트리밋·모델 허용 목록·단가 정책·예산 검사를
+모두 통과한다.
+
+임베딩 모델은 `GET /v1/models` 에 나오지 않는다. 목록을 채팅 모델만으로 유지해
+OpenAI 채팅 클라이언트가 실패할 모델을 고르지 못하게 한다. 임베딩 모델을
+`/v1/chat/completions` 로 보내면 `/v1/embeddings` 를 안내하는 400 이 온다.
+
+`AllowedBedrockModelArn` 을 좁혔다면 임베딩 모델이 그 범위에 들어가는지
+확인한다. 빠지면 권한 오류가 난다.
+
+**한 요청에 입력 96개까지다.** Titan 은 호출당 텍스트 하나만 받으므로 배치가
+그대로 Bedrock 호출 수가 된다. 즉 입력 96개는 Bedrock 호출 96번이지만
+`rpm_limit` 은 1회로 센다 — 이 엔드포인트에서 레이트리밋이 채팅보다 훨씬
+약하다는 뜻이다. 총 45초를 넘기면 중단하고, 그때까지 소비된 토큰은 사용량에
+기록된다.
 
 ---
 
@@ -553,7 +674,8 @@ OpenAI 스펙 중 Bedrock Converse 에 대응이 없는 필드(`presence_penalty
 
 ## 가드레일
 
-Amazon Bedrock Guardrails 를 게이트웨이가 모든 요청에 붙인다. 계정 기준선을
+Amazon Bedrock Guardrails 를 게이트웨이가 **모든 채팅 요청**에 붙인다.
+계정 기준선을
 정하고 팀·사용자 단위로 면제할 수 있다.
 
 ```bash
@@ -845,6 +967,7 @@ CloudWatch 커스텀 네임스페이스 `LLMGateway`:
 | `llmgw-dev-unhealthy-targets` | 비정상 타깃 > 0, 3회 연속 |
 | `llmgw-dev-no-healthy-targets` | 정상 타깃 < 1, 3회 연속 (완전 중단) |
 | `llmgw-dev-usage-write-failures` | 사용량 기록 실패 > 0 |
+| `llmgw-dev-unpriced-requests` | 단가 미등록 모델 요청 > 0 |
 
 ### 자주 만나는 문제
 
@@ -853,7 +976,10 @@ CloudWatch 커스텀 네임스페이스 `LLMGateway`:
 | `/healthz` 에 연결되지 않음 | 이 단말이 허용 목록에 없다. `./scripts/manage_access.sh check` 로 확인하고 `add-me` 로 추가한다 (재배포 불필요) |
 | `503 storage_unavailable` | DynamoDB 테이블이 없거나 태스크 역할 권한 부족. 응답 메시지의 AWS 코드를 확인 |
 | `400 invalid_request` + "단가가 등록되지 않아" | 단가 없는 모델인데 예산이 걸려 있다. 비용이 0 으로 집계되면 예산이 무효가 되므로 막는다. 단가를 등록하거나 예산을 해제한다 |
-| `400 invalid_request` + "지원하지 않는 메시지 본문" | 이미지 등 텍스트가 아닌 조각을 보냈다. 게이트웨이는 텍스트만 전달하며, 조용히 버리지 않고 거부한다 |
+| `400 invalid_request` + "지원하지 않는 메시지 본문" | 오디오·파일 등 게이트웨이가 변환하지 않는 조각을 보냈다. 텍스트와 이미지는 전달하며, 나머지는 조용히 버리지 않고 거부한다 |
+| `400 invalid_request` + "base64" | 이미지를 원격 URL 로 보냈다. 게이트웨이가 대신 가져오면 SSRF 통로가 되므로 거부한다. `data:image/png;base64,...` 로 인코딩해서 보낸다 |
+| `400 invalid_request` + `tool_choice=none` | Converse 에 대응 값이 없다. 도구를 쓰지 않으려면 `tools` 를 보내지 않는다 |
+| `400 invalid_request` + `json_object` | 스키마 없는 구조화 출력은 강제할 수 없다. `response_format.type=json_schema` 로 스키마를 준다 |
 | `403 model_not_allowed` | 키의 `allowed_models` 에 없는 모델. `GET /v1/models` 로 사용 가능 목록 확인 |
 | `403` + "Bedrock 모델 액세스" | 콘솔 Bedrock → Model access 에서 모델 활성화 |
 | `429 insufficient_quota` | 계정/팀/사용자/키 중 하나가 월 예산 초과. 대시보드에서 어느 축인지 확인 |

@@ -268,16 +268,21 @@ guardrail_intervened   → content_filter
 
 ### 지원하지 않는 것
 
-게이트웨이가 v1.1 에서 중계하지 **않는** Claude 기능이다.
+게이트웨이가 중계하지 **않는** Claude 기능이다.
 
 | 기능 | 상태 | 우회 |
 |---|---|---|
-| 이미지 입력(비전) | 텍스트 블록만 전달. 이미지 블록은 무시된다 | Bedrock 을 직접 호출 |
-| 도구 사용(tool use) | 요청의 `tools` 를 전달하지 않는다 | Bedrock 직접 호출 |
 | 확장 사고(extended thinking) | 전용 파라미터를 전달하지 않는다 | Bedrock 직접 호출 |
 | 프롬프트 캐싱 | 캐시 포인트를 지정하지 않는다 | Bedrock 직접 호출 |
-| Guardrails | 연동하지 않는다 | 아래 참고 |
-| 구조화 출력 | 전달하지 않는다 | Bedrock 직접 호출 |
+
+아래는 중계한다. 표에서 빠진 이유를 남긴다.
+
+| 기능 | 상태 |
+|---|---|
+| 도구 사용(tool use) | `tools`/`tool_choice` 를 Converse `toolConfig` 로 변환한다. 스트리밍 델타도 지원한다 |
+| 이미지 입력(비전) | base64 데이터 URL 을 Converse 이미지 블록으로 변환한다. 원격 URL 은 SSRF 를 막기 위해 거부한다 |
+| 구조화 출력 | `response_format=json_schema` 를 강제 도구 호출로 구현한다. `json_object` 는 강제할 수단이 없어 거부한다 |
+| Guardrails | v2.0.0 부터 게이트웨이가 모든 채팅 요청에 붙인다 ([상세](guardrails.md)) |
 
 이 기능들이 필요하면 Bedrock 네이티브 API 나 AWS 가 제공하는 OpenAI 호환
 엔드포인트를 직접 쓰는 편이 낫다. 판단 기준은

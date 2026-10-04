@@ -84,6 +84,10 @@ check_status "채팅 API 무인증 차단" 401 \
     -X POST -H 'Content-Type: application/json' \
     -d '{"model":"amazon.nova-micro-v1:0","messages":[{"role":"user","content":"hi"}]}' \
     "${BASE_URL}/v1/chat/completions"
+check_status "임베딩 API 무인증 차단" 401 \
+    -X POST -H 'Content-Type: application/json' \
+    -d '{"model":"amazon.titan-embed-text-v2:0","input":"hi"}' \
+    "${BASE_URL}/v1/embeddings"
 
 echo
 echo "4. Bedrock 모델 조회"

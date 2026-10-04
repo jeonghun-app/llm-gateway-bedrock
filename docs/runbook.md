@@ -284,6 +284,57 @@ aws logs filter-log-events --region $REGION --log-group-name $LOG_GROUP \
 복구되지 않는다. 원본 레코드가 TTL 안에 있으면 수동 재집계가 가능하지만 현재
 전용 도구는 없다. 알람이 반복되면 원인을 먼저 제거한다.
 
+### `llmgw-*-no-healthy-targets` — 완전 중단
+
+**정상 타깃이 0개다. 서비스가 응답하지 않는다.** `unhealthy-targets` 와 달리
+일부 저하가 아니라 전면 장애이므로 우선순위가 가장 높다.
+
+```bash
+# 타깃 상태와 실패 사유
+aws elbv2 describe-target-health --region $REGION \
+  --target-group-arn "$(aws elbv2 describe-target-groups --region $REGION \
+    --names "llmgw-${ENV}-tg" --query 'TargetGroups[0].TargetGroupArn' --output text)" \
+  --query 'TargetHealthDescriptions[*].TargetHealth' --output json
+
+# 서비스 이벤트 (배포 실패·롤백 여부)
+aws ecs describe-services --region $REGION \
+  --cluster "llmgw-${ENV}" --services "llmgw-${ENV}" \
+  --query 'services[0].{desired:desiredCount,running:runningCount,events:events[:5]}'
+```
+
+직전 배포가 원인이면 배포 서킷 브레이커가 자동 롤백한다. 롤백이 끝나도 타깃이
+올라오지 않으면 태스크 기동 실패를 위 "태스크가 계속 재시작" 절차로 확인한다.
+기동 자체는 정상인데 헬스 체크만 실패하면 DynamoDB 접근 권한을 확인한다 —
+`/healthz` 는 얕은 검사지만 기동 시 설정 검증에서 막히면 컨테이너가 뜨지 않는다.
+
+### `llmgw-*-unpriced-requests` — 단가 미등록 모델 호출
+
+**비용이 0으로 집계되고 있다.** 청구 배분과 예산 강제가 그만큼 부정확해진다.
+예산이 걸린 주체는 애초에 `400` 으로 거부되므로, 이 알람이 뜨는 것은 예산이
+없는 주체가 단가 미등록 모델을 쓰고 있다는 뜻이다.
+
+```bash
+# 어느 모델인지 확인 (경고 로그에 model_id 가 붙는다)
+aws logs filter-log-events --region $REGION --log-group-name $LOG_GROUP \
+  --start-time $(( ($(date +%s) - 3600) * 1000 )) \
+  --filter-pattern '"단가 표에 없는 모델이다"' \
+  --query 'events[*].message' --output text | head -10
+```
+
+CloudWatch 메트릭 `LLMGateway/UnpricedRequests` 에 `Model` 차원이 붙으므로
+콘솔에서 모델별로 바로 볼 수도 있다.
+
+조치는 단가를 등록하는 것이다.
+
+```bash
+./.venv/bin/python scripts/sync_pricing.py       # 단가 표 점검
+```
+
+단가를 넣을 수 없다면 `LLMGW_UNPRICED_MODEL_POLICY` 를 `reject`(항상 거부)
+또는 `hide`(목록에서 감춤)로 바꿔 배포한다. `allow` 로 두면 비용이 0으로
+남는다는 점을 받아들이는 것이다. 현행 Claude 가 여기 해당할 수 있다
+([상세](models-claude.md#5-비용-집계와-단가-표의-현재-한계)).
+
 ---
 
 ## 5. 일상 운영
@@ -421,11 +472,23 @@ aws logs filter-log-events --region $REGION --log-group-name $LOG_GROUP \
 
 ### 개입 조사
 
+**로그로는 찾을 수 없다.** 가드레일 개입은 Bedrock 이 정상 응답으로 돌려주는
+결과다(`stopReason` 이 `guardrail_intervened`). 에러가 아니므로
+`bedrock_error_code` 같은 오류 필드로는 잡히지 않는다. 게이트웨이는 이것을
+`finish_reason=content_filter` 로 매핑해 `200` 으로 응답하고, 사용량 레코드에
+`guardrail_intervened=true` 로 남긴다.
+
+조회는 사용량 데이터로 한다.
+
 ```bash
-# 개입한 요청 (차단된 내용은 저장하지 않으므로 건수와 주체만 보인다)
-aws logs filter-log-events --region $REGION --log-group-name $LOG_GROUP \
-  --filter-pattern '{ $.bedrock_error_code = "*" }'
+# 최근 요청에서 개입 건만 (차단된 내용은 저장하지 않아 건수와 주체만 보인다)
+curl -s -H "X-Admin-Token: $ADMIN_TOKEN" \
+  "$GATEWAY_URL/analytics/requests?account_id=acme&limit=100" \
+  | jq '.data[] | select(.guardrail_intervened == true)
+        | {timestamp, user_id, model_id, guardrail_applied}'
 ```
+
+대시보드 "최근 요청" 탭에도 가드레일 상태(개입 / 적용 / 미적용)가 표시된다.
 
 차단된 프롬프트·응답 원문은 어디에도 남지 않는다. `trace` 를 끄기 때문이다.
 어떤 규칙에 걸렸는지 알아야 하면 AWS 콘솔의 가드레일 지표를 본다.
