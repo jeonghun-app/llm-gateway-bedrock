@@ -21,6 +21,7 @@ import typing
 import fastapi
 from fastapi import responses
 
+from llmgw import bedrock as bedrock_module
 from llmgw import domain
 from llmgw import errors
 from llmgw import pricing as pricing_module
@@ -82,11 +83,11 @@ def _reject_unsupported_content(
 ) -> None:
     """지원하지 않는 본문 조각이 있으면 거부한다.
 
-    Bedrock Converse 는 이미지·문서 content block 을 지원하지만 이 게이트웨이는
-    아직 변환하지 않는다. 변환하지 않은 채 통과시키면 `ChatMessage.text()` 가
-    텍스트 조각만 이어붙이고 나머지를 버린다. 이미지를 보낸 클라이언트는 모델이
-    이미지를 보고 답한 것으로 오해한 채 결과를 쓴다. 조용히 버리는 것보다
-    거부하는 편이 정직하다.
+    텍스트와 이미지(`image_url`)는 Converse 블록으로 변환한다. 오디오·파일
+    같은 나머지 종류는 변환하지 않으므로 거부한다. 변환하지 않은 채
+    통과시키면 `ChatMessage.text()` 가 텍스트만 이어붙이고 나머지를 버린다.
+    보낸 클라이언트는 모델이 그것을 보고 답한 것으로 오해한 채 결과를 쓴다.
+    조용히 버리는 것보다 거부하는 편이 정직하다.
 
     Bedrock 을 호출하기 전에 검사하므로 비용이 발생하지 않는다.
 
@@ -94,7 +95,7 @@ def _reject_unsupported_content(
         payload: 요청 본문.
 
     Raises:
-        InvalidRequestError: 텍스트가 아닌 조각이 있는 경우.
+        InvalidRequestError: 지원하지 않는 조각이 있는 경우.
     """
     unsupported: list[str] = []
     for message in payload.messages:
@@ -106,9 +107,68 @@ def _reject_unsupported_content(
     raise errors.InvalidRequestError(
         "지원하지 않는 메시지 본문 종류다: "
         + ", ".join(sorted(unsupported))
-        + ". 이 게이트웨이는 텍스트만 Bedrock 으로 전달한다. 텍스트가 아닌"
-        " 조각을 조용히 버리면 모델이 그것을 보고 답한 것으로 오해하게 되므로"
-        " 거부한다."
+        + ". 이 게이트웨이는 텍스트와 이미지만 Bedrock 으로 전달한다."
+        " 변환하지 않는 조각을 조용히 버리면 모델이 그것을 보고 답한 것으로"
+        " 오해하게 되므로 거부한다."
+    )
+
+
+def _reject_unfilterable_content(
+    services: services_module.Services,
+    payload: schemas.ChatCompletionRequest,
+) -> None:
+    """확장 필터가 볼 수 없는 요청을 거부한다.
+
+    `extensions.v1` 의 요청 DTO 는 본문을 `str` 하나로 표현한다. 이미지나
+    도구 호출·도구 결과가 섞인 요청은 그 형태로 표현할 수 없어, 필터에
+    넘기면 **필터가 보지 못한 부분이 그대로 통과한다.**
+
+    개인정보 마스킹 필터를 켠 운영자가 "필터가 돌았다" 는 보고를 받았는데
+    실제로는 이미지 안의 주민번호를 아무도 검사하지 않은 상태가 되는 것이
+    가장 나쁘다. 확장이 활성화된 동안에는 이런 요청을 거부한다.
+
+    Args:
+        services: 서비스 컨테이너.
+        payload: 요청 본문.
+
+    Raises:
+        InvalidRequestError: 활성 확장이 있고 요청이 v1 계약으로 표현할 수
+            없는 내용을 담은 경우.
+    """
+    if services.request_filters.is_empty:
+        return
+
+    reasons: list[str] = []
+    if payload.tools:
+        reasons.append("tools")
+    if (
+        payload.response_format is not None
+        and payload.response_format.type == "json_schema"
+    ):
+        # 구조화 출력은 클라이언트가 준 JSON Schema 를 합성 도구로 만들어
+        # Bedrock 에 보낸다. 스키마의 description 등은 모델이 읽는 프롬프트의
+        # 일부인데, 확장은 messages 만 보므로 검사되지 않는다. 즉 필터를 켠
+        # 상태에서 임의 텍스트를 모델에 밀어넣는 통로가 된다.
+        reasons.append("response_format=json_schema")
+    for message in payload.messages:
+        if message.image_parts() and "이미지" not in reasons:
+            reasons.append("이미지")
+        if message.tool_calls and "tool_calls" not in reasons:
+            reasons.append("tool_calls")
+        if (
+            message.role.strip().lower() == "tool"
+            and "도구 결과" not in reasons
+        ):
+            reasons.append("도구 결과")
+    if not reasons:
+        return
+
+    raise errors.InvalidRequestError(
+        "요청 필터 확장이 활성화된 상태에서는 이 요청을 처리할 수 없다:"
+        f" {', '.join(reasons)}."
+        " 확장 v1 계약은 본문을 텍스트 하나로만 표현하므로 이 내용을 검사할"
+        " 수 없다. 검사하지 못한 것을 통과시키면 필터를 켠 의미가 없어"
+        " 거부한다. 확장을 끄거나 텍스트만 보낸다."
     )
 
 
@@ -236,6 +296,8 @@ def chat_completions(
 
     try:
         _reject_unsupported_content(payload)
+        _reject_non_chat_model(payload.model)
+        _reject_unfilterable_content(services, payload)
         services.authenticator.enforce_rate_limit(principal, started_at)
         _enforce_pricing_policy(services, payload.model, principal)
         services.authenticator.enforce_model(principal, payload.model)
@@ -398,6 +460,7 @@ def _blocking_completion(
             system=bedrock_request.system,
             inference_config=bedrock_request.inference_config,
             guardrail=guardrail,
+            tool_config=bedrock_request.tool_config,
         )
     except errors.GatewayError as exc:
         _record_failure(
@@ -408,6 +471,59 @@ def _blocking_completion(
             model_id=payload.model,
             exc=exc,
             streamed=False,
+        )
+        raise
+
+    content = result.text
+    tool_calls = result.tool_calls
+    finish_reason = translate.map_finish_reason(result.stop_reason)
+
+    # 후처리를 성공 레코드보다 **먼저** 한다. 여기서 실패한 뒤에 200 레코드가
+    # 남으면 대시보드는 성공으로 보이는데 클라이언트는 오류를 받는다. 에러율이
+    # 과소 보고되고, 그것도 운영자가 가장 찾아야 하는 경우(모델이 강제 도구
+    # 호출을 지원하지 않음)에 과소 보고된다.
+    try:
+        if (
+            bedrock_request.structured_tool_name is not None
+            and finish_reason != "content_filter"
+        ):
+            # 구조화 출력은 강제 도구 호출로 구현했다. 합성 도구를 클라이언트에
+            # 노출하지 않고, 그 입력을 본문 JSON 으로 되돌린다.
+            #
+            # 가드레일이 개입하면 Converse 는 도구 호출 없이 차단 문구
+            # 텍스트와 `guardrail_intervened`/`content_filtered` 만 돌려준다.
+            # 그 경우를 "모델이 toolChoice 를 지원하지 않는다" 는 오류로
+            # 다루면, 가드레일에 걸린 요청이 502 로 재시도되며 반복 청구되고
+            # 대시보드에는 가드레일 개입이 아니라 upstream 오류로 남는다.
+            # 차단 문구를 그대로 본문으로 돌려준다.
+            content = translate.unwrap_structured_output(
+                tool_calls, bedrock_request.structured_tool_name
+            )
+            tool_calls = ()
+            # **도구 호출로 끝난 경우만** stop 으로 바꾼다. 무조건 덮으면
+            # max_tokens 로 잘린 응답(length)이 "정상 종료" 로 보고된다.
+            # 클라이언트는 잘린 JSON 을 완전한 결과로 읽는다.
+            if finish_reason == "tool_calls":
+                finish_reason = "stop"
+        elif bedrock_request.structured_tool_name is not None:
+            # finish_reason == content_filter 로 위 분기를 건너뛴 경우다.
+            # 모델이 가드레일 개입 전에 합성 도구를 이미 불렀다면 Converse 가
+            # 차단 문구와 함께 그 toolUse 블록을 돌려줄 수 있다. 클라이언트는
+            # tools 를 보낸 적이 없으므로, 노출하지 않기로 한 합성 도구
+            # 호출이 tool_calls 로 새면 안 된다.
+            tool_calls = ()
+    except errors.GatewayError as exc:
+        _record_failure(
+            services=services,
+            principal=principal,
+            request_id=request_id,
+            started_at=started_at,
+            model_id=payload.model,
+            exc=exc,
+            streamed=False,
+            # 토큰은 실제로 소비됐다. 상태만 실패다.
+            input_tokens=result.input_tokens,
+            output_tokens=result.output_tokens,
         )
         raise
 
@@ -430,10 +546,11 @@ def _blocking_completion(
         completion_id=f"chatcmpl-{request_id}",
         created_unix=int(started_at.timestamp()),
         model_id=payload.model,
-        content=result.text,
-        finish_reason=translate.map_finish_reason(result.stop_reason),
+        content=content,
+        finish_reason=finish_reason,
         input_tokens=result.input_tokens,
         output_tokens=result.output_tokens,
+        tool_calls=tool_calls,
     )
 
 
@@ -475,6 +592,7 @@ def _stream_completion(
             system=bedrock_request.system,
             inference_config=bedrock_request.inference_config,
             guardrail=guardrail,
+            tool_config=bedrock_request.tool_config,
         ):
             if delta.text:
                 yield _sse(
@@ -483,6 +601,30 @@ def _stream_completion(
                         created_unix=created_unix,
                         model_id=payload.model,
                         delta={"content": delta.text},
+                    )
+                )
+            if delta.tool_index is not None:
+                # 도구 블록 시작이면 id·name 을 실어 보내고, 이후 증분은
+                # arguments 조각만 보낸다. OpenAI 클라이언트가 index 로
+                # 병렬 도구 호출을 구분한다.
+                tool_delta: dict[str, typing.Any] = {"index": delta.tool_index}
+                if delta.tool_use_id:
+                    tool_delta["id"] = delta.tool_use_id
+                    tool_delta["type"] = "function"
+                    tool_delta["function"] = {
+                        "name": delta.tool_name,
+                        "arguments": "",
+                    }
+                else:
+                    tool_delta["function"] = {
+                        "arguments": delta.tool_arguments_delta
+                    }
+                yield _sse(
+                    translate.build_chunk(
+                        completion_id=completion_id,
+                        created_unix=created_unix,
+                        model_id=payload.model,
+                        delta={"tool_calls": [tool_delta]},
                     )
                 )
             if delta.stop_reason:
@@ -544,6 +686,61 @@ def _stream_completion(
         services.recorder.persist(record, key_hash=principal.key_hash)
 
 
+def _reject_unfilterable_embedding(
+    services: services_module.Services,
+) -> None:
+    """확장이 켜진 상태의 임베딩 요청을 거부한다.
+
+    확장 v1 계약(`extensions.v1.RequestPayload`)은 **채팅 메시지만** 표현한다.
+    임베딩 입력을 넘길 자리가 없어, 이 엔드포인트는 필터를 거치지 않고 곧장
+    Bedrock 으로 간다.
+
+    개인정보 마스킹 확장을 켠 운영자는 모든 요청이 검사된다고 믿는다. 검사되지
+    않는 엔드포인트를 조용히 열어 두면, 없는 것보다 나쁘다 — 없으면 위험을
+    알지만 있으면 안전하다고 오해한다. 그래서 거부한다.
+
+    Args:
+        services: 서비스 컨테이너.
+
+    Raises:
+        InvalidRequestError: 활성 확장이 있는 경우.
+    """
+    if services.request_filters.is_empty:
+        return
+    raise errors.InvalidRequestError(
+        "요청 필터 확장이 활성화된 상태에서는 /v1/embeddings 를 처리할 수"
+        " 없다. 확장 v1 계약은 채팅 메시지만 표현하므로 임베딩 입력을 검사할"
+        " 수 없고, 검사하지 못한 것을 통과시키면 필터를 켠 의미가 없다."
+        " 확장을 끄거나 임베딩을 쓰지 않는다."
+    )
+
+
+def _reject_non_chat_model(model_id: str) -> None:
+    """채팅으로 호출할 수 없는 모델을 명확한 메시지로 거부한다.
+
+    임베딩 모델을 `/v1/chat/completions` 로 보내면 Bedrock 이
+    "This action doesn't support the model" 로 400 을 낸다. 그 메시지만으로는
+    어디로 보내야 하는지 알 수 없다. 게이트웨이가 먼저 안내한다.
+
+    Args:
+        model_id: 요청 모델 ID.
+
+    Raises:
+        InvalidRequestError: Converse 로 호출할 수 없는 계열인 경우.
+    """
+    if bedrock_module.supports_converse(model_id):
+        return
+    if bedrock_module.embedding_family(model_id) is not None:
+        raise errors.InvalidRequestError(
+            f"이 모델은 임베딩 모델이다: {model_id}."
+            " 채팅이 아니라 POST /v1/embeddings 로 호출한다."
+        )
+    raise errors.InvalidRequestError(
+        f"이 모델은 채팅으로 호출할 수 없다: {model_id}."
+        " 임베딩·재순위·이미지 생성 모델은 Converse 를 지원하지 않는다."
+    )
+
+
 def _record_failure(
     *,
     services: services_module.Services,
@@ -553,15 +750,32 @@ def _record_failure(
     model_id: str,
     exc: errors.GatewayError,
     streamed: bool,
+    input_tokens: int = 0,
+    output_tokens: int = 0,
 ) -> None:
-    """실패한 요청을 사용량에 기록한다."""
+    """실패한 요청을 사용량에 기록한다.
+
+    Args:
+        services: 서비스 컨테이너.
+        principal: 인증된 요청 주체.
+        request_id: 상관관계 ID.
+        started_at: 요청 시작 시각.
+        model_id: 요청 모델 ID.
+        exc: 발생한 오류.
+        streamed: 스트리밍 요청이었는지 여부.
+        input_tokens: 실패 전에 이미 소비된 입력 토큰 수. 배치 요청이
+            중간에 실패했거나, 업스트림 응답을 받은 뒤 후처리에서 실패한
+            경우 **0 이 아니다.** 실제로 청구된 토큰을 0 으로 기록하면
+            비용이 집계에서 사라져 예산이 조용히 무효가 된다.
+        output_tokens: 같은 이유로 이미 소비된 출력 토큰 수.
+    """
     record = services.recorder.build_record(
         principal=principal,
         request_id=request_id,
         started_at=started_at,
         model_id=model_id,
-        input_tokens=0,
-        output_tokens=0,
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
         latency_ms=_elapsed_ms(services, started_at),
         status_code=exc.status_code,
         error_code=exc.code,
@@ -576,3 +790,161 @@ def _elapsed_ms(
     """요청 시작부터 지금까지 경과한 밀리초를 계산한다."""
     delta = services.clock.now() - started_at
     return max(int(delta.total_seconds() * 1000), 0)
+
+
+# ---------------------------------------------------------------------------
+# 임베딩
+# ---------------------------------------------------------------------------
+
+# 한 요청에 담을 수 있는 텍스트 수 상한. Titan 은 호출당 텍스트 하나만 받아
+# 배치가 그대로 호출 수가 된다. 상한이 없으면 한 요청이 태스크를 오래 점유해
+# 다른 요청의 지연으로 번진다.
+_MAX_EMBEDDING_BATCH = 96
+
+
+@router.post("/embeddings")
+def embeddings(
+    payload: schemas.EmbeddingRequest,
+    services: services_module.ServicesDep,
+    authorization: typing.Annotated[
+        str | None, fastapi.Header(alias="Authorization")
+    ] = None,
+    x_request_id: typing.Annotated[
+        str | None, fastapi.Header(alias="X-Request-Id")
+    ] = None,
+) -> dict[str, typing.Any]:
+    """텍스트 임베딩을 생성한다.
+
+    채팅과 같은 검사를 모두 통과한다. 인증 → 레이트리밋 → 단가 정책 →
+    모델 허용 목록 → 예산 순이다. 임베딩만 예외로 두면 예산을 우회하는
+    경로가 된다.
+
+    가드레일은 붙이지 않는다. 임베딩은 생성 응답이 없어 검사 대상이 없고,
+    Converse 경로가 아니라 `guardrailConfig` 를 실을 자리도 없다.
+
+    Args:
+        payload: OpenAI 형식 요청 본문.
+        services: 서비스 컨테이너.
+        authorization: `Bearer <api-key>` 헤더.
+        x_request_id: 클라이언트가 지정한 상관관계 ID.
+
+    Returns:
+        OpenAI 형식의 임베딩 응답.
+
+    Raises:
+        GatewayError: 인증·권한·예산·업스트림 오류가 발생한 경우.
+    """
+    started_at = services.clock.now()
+    request_id = (x_request_id or "").strip() or services.id_factory.new_id()
+    principal = services.authenticator.authenticate(authorization)
+
+    try:
+        texts = _embedding_texts(payload)
+        _reject_unfilterable_embedding(services)
+        services.authenticator.enforce_rate_limit(principal, started_at)
+        _enforce_pricing_policy(services, payload.model, principal)
+        services.authenticator.enforce_model(principal, payload.model)
+        services.authenticator.enforce_budget(principal, started_at)
+    except errors.GatewayError as exc:
+        _record_failure(
+            services=services,
+            principal=principal,
+            request_id=request_id,
+            started_at=started_at,
+            model_id=payload.model,
+            exc=exc,
+            streamed=False,
+        )
+        raise
+
+    try:
+        result = services.bedrock.embed(
+            model_id=payload.model,
+            texts=texts,
+            dimensions=payload.dimensions,
+        )
+    except errors.GatewayError as exc:
+        _record_failure(
+            services=services,
+            principal=principal,
+            request_id=request_id,
+            started_at=started_at,
+            model_id=payload.model,
+            exc=exc,
+            streamed=False,
+            # 배치가 중간에 실패했으면 앞선 호출은 이미 청구됐다.
+            input_tokens=exc.consumed_input_tokens,
+        )
+        raise
+
+    # 응답을 먼저 만든다. 직렬화가 실패한 뒤에 성공 레코드가 남으면
+    # 대시보드는 200 으로 보이는데 클라이언트는 오류를 받는다.
+    try:
+        body = translate.build_embedding_response(
+            model_id=payload.model,
+            vectors=result.vectors,
+            input_tokens=result.input_tokens,
+            base64_encoding=payload.encoding_format == "base64",
+        )
+    except errors.GatewayError as exc:
+        _record_failure(
+            services=services,
+            principal=principal,
+            request_id=request_id,
+            started_at=started_at,
+            model_id=payload.model,
+            exc=exc,
+            streamed=False,
+            input_tokens=result.input_tokens,
+        )
+        raise
+
+    # 출력 토큰이 없는 것이 정상이다. pricing.json 의 임베딩 모델은
+    # output_per_1k_usd 가 0 이라 비용 계산이 그대로 정확하다.
+    record = services.recorder.build_record(
+        principal=principal,
+        request_id=request_id,
+        started_at=started_at,
+        model_id=payload.model,
+        input_tokens=result.input_tokens,
+        output_tokens=0,
+        latency_ms=_elapsed_ms(services, started_at),
+        status_code=200,
+        streamed=False,
+    )
+    services.recorder.persist(record, key_hash=principal.key_hash)
+
+    return body
+
+
+def _embedding_texts(payload: schemas.EmbeddingRequest) -> list[str]:
+    """임베딩 입력을 검증해 텍스트 목록으로 만든다.
+
+    Args:
+        payload: 요청 본문.
+
+    Returns:
+        임베딩할 텍스트 목록.
+
+    Raises:
+        InvalidRequestError: 입력이 비었거나 배치 상한을 넘은 경우.
+    """
+    if isinstance(payload.input, list) and any(
+        not isinstance(item, str) for item in payload.input
+    ):
+        # OpenAI 는 토큰 ID 배열도 허용하지만 Bedrock 은 텍스트만 받는다.
+        # 역토큰화를 추측으로 하면 청구 대상 입력이 달라진다.
+        raise errors.InvalidRequestError(
+            "input 은 문자열 또는 문자열 배열이어야 한다. 토큰 ID 배열은"
+            " Bedrock 이 받지 않아 지원하지 않는다."
+        )
+    try:
+        texts = payload.texts()
+    except ValueError as exc:
+        raise errors.InvalidRequestError(str(exc)) from exc
+    if len(texts) > _MAX_EMBEDDING_BATCH:
+        raise errors.InvalidRequestError(
+            f"한 요청의 입력 수 상한은 {_MAX_EMBEDDING_BATCH} 개다:"
+            f" {len(texts)} 개를 보냈다."
+        )
+    return texts

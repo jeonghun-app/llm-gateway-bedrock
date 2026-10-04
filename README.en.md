@@ -119,7 +119,7 @@ drop the spend from cost allocation.
 | Data | 3 DynamoDB tables (on-demand, PITR, SSE-KMS) |
 | Secrets | Secrets Manager (token generated automatically) |
 | Registry | ECR (scan on push, immutable tags) |
-| Observability | CloudWatch Logs, EMF custom metrics, 4 alarms, SNS |
+| Observability | CloudWatch Logs, EMF custom metrics, 6 alarms, SNS |
 | Network | Dedicated VPC, IGW, S3/DynamoDB gateway endpoints |
 | IaC | CloudFormation, 2 stacks |
 
@@ -166,7 +166,7 @@ git clone <this repository>
 cd llm-gateway-bedrock
 
 ./scripts/deploy.sh --allowed-cidr "$(curl -s https://checkip.amazonaws.com)/32" \
-  --image ghcr.io/jeonghun-app/llm-gateway-bedrock:v2.1.1
+  --image ghcr.io/jeonghun-app/llm-gateway-bedrock:v2.2.0
 ```
 
 **Your data never leaves your AWS account.** The image is pulled from GitHub
@@ -190,17 +190,17 @@ recovery. For production, copy the image into your account and use that URI.
 ```bash
 # Once: copy the public image into your own ECR
 aws ecr create-repository --repository-name llmgw --region <region>
-docker pull ghcr.io/jeonghun-app/llm-gateway-bedrock:v2.1.1
-docker tag ghcr.io/jeonghun-app/llm-gateway-bedrock:v2.1.1 \
-  <account-id>.dkr.ecr.<region>.amazonaws.com/llmgw:v1.10.0
+docker pull ghcr.io/jeonghun-app/llm-gateway-bedrock:v2.2.0
+docker tag ghcr.io/jeonghun-app/llm-gateway-bedrock:v2.2.0 \
+  <account-id>.dkr.ecr.<region>.amazonaws.com/llmgw:v2.2.0
 aws ecr get-login-password --region <region> \
   | docker login --username AWS --password-stdin <account-id>.dkr.ecr.<region>.amazonaws.com
-docker push <account-id>.dkr.ecr.<region>.amazonaws.com/llmgw:v1.10.0
+docker push <account-id>.dkr.ecr.<region>.amazonaws.com/llmgw:v2.2.0
 
 # Deploy. Passing EcrRepositoryArn narrows the task execution role's pull
 # permission to that repository only.
 ./scripts/deploy.sh --allowed-cidr <IP>/32 \
-  --image <account-id>.dkr.ecr.<region>.amazonaws.com/llmgw:v1.10.0
+  --image <account-id>.dkr.ecr.<region>.amazonaws.com/llmgw:v2.2.0
 ```
 
 ### Build from source (contributors)
@@ -484,7 +484,8 @@ entry per call.
 
 | Method | Path | Auth | Description |
 |---|---|---|---|
-| `POST` | `/v1/chat/completions` | API key or OIDC token | Chat completion (streaming supported) |
+| `POST` | `/v1/chat/completions` | API key or OIDC token | Chat completion (streaming, tools, vision, structured output) |
+| `POST` | `/v1/embeddings` | API key or OIDC token | Text embeddings (Titan family) |
 | `GET` | `/v1/models` | API key or OIDC token | Models this credential may use |
 | `GET` | `/healthz` | none | Shallow health check (for the ALB) |
 | `GET` | `/readyz` | none | Verifies DynamoDB and Bedrock access |
@@ -499,8 +500,137 @@ The full specification lives in [`docs/openapi.json`](docs/openapi.json) and is
 browsable interactively at `/docs` on a deployed gateway.
 
 Fields in the OpenAI specification that have no Bedrock Converse equivalent
-(`presence_penalty`, `logit_bias`, and so on) are accepted and ignored. `n > 1`,
-which would change the result, is rejected explicitly.
+(`presence_penalty`, `logit_bias`, and so on) are accepted and ignored.
+**Anything that would change the result is rejected rather than ignored.**
+Accepting it and behaving differently would be a promise the gateway does not
+keep.
+
+| Request | Handling |
+|---|---|
+| `n > 1` | Rejected. Converse returns exactly one candidate |
+| `tool_choice: "none"` | Rejected. Converse has no equivalent. To avoid tool use, do not send `tools` |
+| `parallel_tool_calls: false` | Rejected. Converse has no switch to disable parallel calls |
+| `response_format: json_object` | Rejected. Without a schema there is nothing to enforce. Use `json_schema` |
+| `response_format: json_schema` + `stream` | Rejected. Structured output is implemented as a forced tool call, so there are no incremental text deltas |
+| `response_format: json_schema` + `tool_choice` | Rejected. Structured output always force-calls a synthetic tool, which conflicts with the requested choice strategy |
+| Remote URL images | Rejected. Fetching them server-side would open an SSRF path. Send base64 |
+| `image_url.detail` | Ignored. Converse has no equivalent |
+| Images in system/developer messages | Rejected. Converse `system` accepts text only |
+| Images in `role="tool"` messages | Rejected. Tool results are relayed as text only |
+| More than 8 images or 18 MB total per request | Rejected. Limits how much decoded image data accumulates in memory. There is no size cap on the request **body** itself yet ([#41](https://github.com/jeonghun-app/llm-gateway-bedrock/issues/41)) |
+
+### Tool use (function calling)
+
+`tools` and `tool_choice` are translated into the Converse `toolConfig`.
+Response `tool_calls`, tool result messages (`role: "tool"`), and streaming
+deltas are all supported, so agent frameworks such as LangChain work unchanged.
+
+```python
+response = client.chat.completions.create(
+    model="amazon.nova-lite-v1:0",
+    messages=[{"role": "user", "content": "What is the weather in Seoul?"}],
+    tools=[{
+        "type": "function",
+        "function": {
+            "name": "get_weather",
+            "description": "Look up the current weather for a city",
+            "parameters": {
+                "type": "object",
+                "properties": {"city": {"type": "string"}},
+                "required": ["city"],
+            },
+        },
+    }],
+)
+```
+
+Each tool round trip is **a separate request**. Every request is metered
+independently, so cost stays accurate — but because prior tool results are
+resent each time, input tokens grow quickly as the conversation lengthens. In
+agent loops a monthly budget can be consumed faster than expected, so pair it
+with `rpm_limit`.
+
+### Image input (vision)
+
+Send images as base64 data URLs. Supported formats are `png`, `jpeg`, `gif`,
+and `webp`, up to 4.5 MB per image after decoding.
+
+```python
+response = client.chat.completions.create(
+    model="us.anthropic.claude-sonnet-4-5-20250929-v1:0",
+    messages=[{
+        "role": "user",
+        "content": [
+            {"type": "text", "text": "Describe this picture"},
+            {"type": "image_url",
+             "image_url": {"url": "data:image/png;base64,iVBORw0..."}},
+        ],
+    }],
+)
+```
+
+Converse folds image tokens into `inputTokens`, so cost accounting and budget
+checks remain exact with no changes.
+
+### Structured output
+
+`response_format.type=json_schema` is supported. Converse has no equivalent
+field, so the gateway synthesizes a tool whose input is the schema, forces that
+tool call, and converts the tool input back into the message body. The contract
+the synthetic tool is never exposed to the client.
+
+**One difference matters.** OpenAI's `strict` guarantees schema conformance.
+This gateway passes the schema in as a tool input so the model follows it, but
+does not re-validate the returned value against the schema. If the model omits
+a `required` field, it is passed through. Validate client-side if you need a
+hard guarantee.
+
+If a model does not support forced tool choice (`toolChoice`), the request
+fails. Silently returning an empty body would be mistaken for a
+schema-conforming result, so it is turned into an error.
+
+**When a request filter extension is enabled**, tool and image requests are
+rejected. The extension v1 contract represents the body as a single string and
+cannot inspect this content; letting through what was never inspected would
+defeat the purpose of enabling the filter. See
+[`docs/extensions-v1.md`](docs/extensions-v1.md).
+
+### Embeddings
+
+`POST /v1/embeddings` is supported for Amazon Titan embedding models.
+
+```python
+result = client.embeddings.create(
+    model="amazon.titan-embed-text-v2:0",
+    input=["first sentence", "second sentence"],
+)
+```
+
+Embeddings are the one path that uses `InvokeModel` rather than Converse,
+because Converse does not support embedding models. That means the request body
+differs per model family, so **only families that actually report an input
+token count are supported.** A model that does not report tokens would be
+recorded at zero cost, which silently voids a monthly budget. Cohere embedding
+models are therefore rejected until their response shape is verified.
+
+Output tokens are always zero, which is correct — `pricing.json` sets
+`output_per_1k_usd` to `0` for embedding models, so cost is computed exactly
+from input tokens. Embeddings pass the same authentication, rate limit, model
+allowlist, pricing policy, and budget checks as chat.
+
+Embedding models are not listed by `GET /v1/models`, which stays chat-only so
+that OpenAI chat clients cannot pick a model that will fail. Sending an
+embedding model to `/v1/chat/completions` returns a 400 pointing at
+`/v1/embeddings`.
+
+If you narrowed `AllowedBedrockModelArn`, make sure it still covers the
+embedding model or calls will fail with a permission error.
+
+**Up to 96 inputs per request.** Titan accepts one text per call, so the batch
+size is the number of Bedrock calls. 96 inputs means 96 Bedrock calls but only
+one unit of `rpm_limit` — rate limiting is much weaker on this endpoint than on
+chat. A batch that exceeds 45 seconds total is aborted, and the tokens consumed
+up to that point are recorded as usage.
 
 ---
 
@@ -623,7 +753,8 @@ time does not change as request volume grows.
 
 ## Guardrails
 
-The gateway attaches Amazon Bedrock Guardrails to every request. You set an
+The gateway attaches Amazon Bedrock Guardrails to **every chat request**.
+You set an
 account baseline and may exempt specific teams or users.
 
 ```bash
@@ -922,7 +1053,9 @@ Per-account, per-team, and per-user figures come from the dashboard instead.
 | `llmgw-dev-alb-5xx` | Target 5xx > 5 over 5 minutes |
 | `llmgw-dev-latency-p99` | p99 response time > 30 s, 2 periods in a row |
 | `llmgw-dev-unhealthy-targets` | Unhealthy targets > 0, 3 periods in a row |
+| `llmgw-dev-no-healthy-targets` | Healthy targets < 1, 3 periods in a row (total outage) |
 | `llmgw-dev-usage-write-failures` | Usage write failures > 0 |
+| `llmgw-dev-unpriced-requests` | Requests for unpriced models > 0 |
 
 ### Common problems
 

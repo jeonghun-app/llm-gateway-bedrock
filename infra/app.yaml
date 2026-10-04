@@ -14,7 +14,7 @@ AWSTemplateFormatVersion: "2010-09-09"
 #   진입점    Application Load Balancer, 타깃 그룹, 리스너
 #   저장소    DynamoDB 3개 (registry / usage / usage-agg)
 #   시크릿    Secrets Manager 에 관리 토큰 자동 생성
-#   관측      CloudWatch 로그 그룹, 알람 4개, SNS 토픽
+#   관측      CloudWatch 로그 그룹, 알람 6개, SNS 토픽
 #
 # 네트워크 설계 판단
 #   태스크를 퍼블릭 서브넷에 두고 공인 IP 를 붙인다. 프라이빗 서브넷 +
@@ -65,7 +65,7 @@ Parameters:
   ImageUri:
     Type: String
     MinLength: 1
-    Default: ghcr.io/jeonghun-app/llm-gateway-bedrock:v2.1.1
+    Default: ghcr.io/jeonghun-app/llm-gateway-bedrock:v2.2.0
     Description: >-
       ECS 가 실행할 컨테이너 이미지 URI. 태그를 포함한다.
 
@@ -78,7 +78,7 @@ Parameters:
       받으므로(호스트 캐시가 없다) 외부 레지스트리 장애가 스케일아웃과 복구를
       막는다. 그때는 EcrRepositoryArn 도 함께 지정한다.
 
-      예: ghcr.io/jeonghun-app/llm-gateway-bedrock:v2.1.1
+      예: ghcr.io/jeonghun-app/llm-gateway-bedrock:v2.2.0
       예: 123456789012.dkr.ecr.us-east-1.amazonaws.com/llmgw-dev:abc1234
 
   EcrRepositoryArn:
@@ -921,6 +921,11 @@ Resources:
                   - !GetAtt UsageAggTable.Arn
               - Sid: BedrockInvoke
                 Effect: Allow
+                # bedrock:InvokeModel 은 Converse 와 InvokeModel 양쪽을
+                # 포괄한다. 임베딩(/v1/embeddings)은 Converse 가 임베딩
+                # 모델을 지원하지 않아 InvokeModel 을 쓰므로 같은 권한으로
+                # 동작한다. 단 AllowedBedrockModelArn 을 좁히면 임베딩 모델이
+                # 범위에서 빠질 수 있다.
                 Action:
                   - bedrock:InvokeModel
                   - bedrock:InvokeModelWithResponseStream

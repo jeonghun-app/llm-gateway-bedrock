@@ -46,6 +46,7 @@ from llmgw import oidc  # noqa: E402
 from llmgw import pricing  # noqa: E402
 from llmgw import repository  # noqa: E402
 from llmgw import services
+from llmgw import translate  # noqa: E402
 from llmgw import usage  # noqa: E402
 from llmgw.extensions import runtime as extensions_runtime  # noqa: E402
 
@@ -250,6 +251,13 @@ def pricing_table() -> pricing.PricingTable:
                 input_per_1k_usd=decimal.Decimal("0.01"),
                 output_per_1k_usd=decimal.Decimal("0.02"),
             ),
+            # 임베딩 모델은 출력 토큰이 없다. 실제 pricing.json 도
+            # output_per_1k_usd 를 0 으로 둔다.
+            "amazon.titan-embed-text-v2:0": pricing.ModelPrice(
+                model_id="amazon.titan-embed-text-v2:0",
+                input_per_1k_usd=decimal.Decimal("0.004"),
+                output_per_1k_usd=decimal.Decimal("0"),
+            ),
         }
     )
 
@@ -417,6 +425,7 @@ def make_usage_record(
 # 결과가 테스트에서 눈으로 검증 가능한 값이 되게 했다.
 FAKE_INPUT_TOKENS = 12
 FAKE_OUTPUT_TOKENS = 5
+FAKE_EMBED_TOKENS = 7
 FAKE_RESPONSE_TEXT = "안녕하세요"
 FAKE_MODEL_IDS = (
     "amazon.nova-lite-v1:0",
@@ -443,6 +452,12 @@ class FakeBedrock:
         self.raise_on_converse: Exception | None = None
         self.raise_on_stream: Exception | None = None
         self.model_ids: tuple[str, ...] = FAKE_MODEL_IDS
+        # 도구 호출 응답을 재현할 때 채운다. 비어 있으면 텍스트만 반환한다.
+        self.tool_calls: tuple[translate.ToolUse, ...] = ()
+        self.last_embed_call: dict[str, typing.Any] | None = None
+        self.raise_on_embed: Exception | None = None
+        # 도구 호출 스트리밍을 재현할 때 채운다.
+        self.stream_tool_deltas: tuple[bedrock.StreamDelta, ...] = ()
 
     def verify_guardrail(self, guardrail_id: str, version: str) -> None:
         """가드레일 검증 대역."""
@@ -456,27 +471,63 @@ class FakeBedrock:
         """고정된 모델 목록을 반환한다."""
         return self.model_ids
 
+    def embed(
+        self,
+        *,
+        model_id: str,
+        texts: typing.Sequence[str],
+        dimensions: int | None = None,
+    ) -> bedrock.EmbedResult:
+        """입력 개수만큼 고정 벡터를 반환한다."""
+        self.last_embed_call = {
+            "model_id": model_id,
+            "texts": list(texts),
+            "dimensions": dimensions,
+        }
+        if self.raise_on_embed is not None:
+            raise self.raise_on_embed
+        if bedrock.embedding_family(model_id) is None:
+            raise errors.InvalidRequestError(
+                f"지원하지 않는 임베딩 모델이다: {model_id}"
+            )
+        width = dimensions or 3
+        return bedrock.EmbedResult(
+            vectors=tuple(
+                tuple(float(index + 1) for _ in range(width))
+                for index in range(len(texts))
+            ),
+            input_tokens=FAKE_EMBED_TOKENS * len(texts),
+        )
+
     def converse(self, **params: typing.Any) -> bedrock.ConverseResult:
         """고정 응답을 반환하거나 설정된 예외를 던진다."""
         self.last_call = params
         if self.raise_on_converse is not None:
             raise self.raise_on_converse
         return bedrock.ConverseResult(
-            text=FAKE_RESPONSE_TEXT,
+            text="" if self.tool_calls else FAKE_RESPONSE_TEXT,
             stop_reason=self.stop_reason,
             input_tokens=FAKE_INPUT_TOKENS,
             output_tokens=FAKE_OUTPUT_TOKENS,
+            tool_calls=self.tool_calls,
         )
 
     def converse_stream(
         self, **params: typing.Any
     ) -> typing.Iterator[bedrock.StreamDelta]:
-        """텍스트를 한 글자씩 흘려보낸다."""
+        """텍스트를 한 글자씩 흘려보낸다.
+
+        `stream_tool_deltas` 를 채우면 텍스트 대신 그 델타를 흘린다. SSE
+        프레임 조립을 검증하기 위한 것이다.
+        """
         self.last_call = params
         if self.raise_on_stream is not None:
             raise self.raise_on_stream
-        for character in FAKE_RESPONSE_TEXT:
-            yield bedrock.StreamDelta(text=character)
+        if self.stream_tool_deltas:
+            yield from self.stream_tool_deltas
+        else:
+            for character in FAKE_RESPONSE_TEXT:
+                yield bedrock.StreamDelta(text=character)
         yield bedrock.StreamDelta(stop_reason=self.stop_reason)
         yield bedrock.StreamDelta(
             input_tokens=FAKE_INPUT_TOKENS,

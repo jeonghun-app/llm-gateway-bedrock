@@ -3,7 +3,7 @@
     "schemas": {
       "ChatCompletionRequest": {
         "additionalProperties": true,
-        "description": "`POST /v1/chat/completions` 요청 본문.\n\nAttributes:\n    model: Bedrock 모델 ID 또는 추론 프로파일 ID.\n    messages: 대화 이력.\n    max_tokens: 최대 출력 토큰. OpenAI 의 구 필드명.\n    max_completion_tokens: 최대 출력 토큰. OpenAI 의 신 필드명.\n        둘 다 오면 이쪽을 우선한다.\n    temperature: 샘플링 온도.\n    top_p: 누적 확률 절단값.\n    stop: 정지 문자열 또는 목록.\n    stream: SSE 스트리밍 여부.\n    n: 생성할 후보 수. 1만 지원한다.\n    user: 호출자 식별 문자열. 사용량은 API 키로 귀속되므로 무시한다.",
+        "description": "`POST /v1/chat/completions` 요청 본문.\n\nAttributes:\n    model: Bedrock 모델 ID 또는 추론 프로파일 ID.\n    messages: 대화 이력.\n    max_tokens: 최대 출력 토큰. OpenAI 의 구 필드명.\n    max_completion_tokens: 최대 출력 토큰. OpenAI 의 신 필드명.\n        둘 다 오면 이쪽을 우선한다.\n    temperature: 샘플링 온도.\n    top_p: 누적 확률 절단값.\n    stop: 정지 문자열 또는 목록.\n    stream: SSE 스트리밍 여부.\n    n: 생성할 후보 수. 1만 지원한다.\n    user: 호출자 식별 문자열. 사용량은 API 키로 귀속되므로 무시한다.\n    tools: 모델에 노출할 도구 목록.\n    tool_choice: 도구 선택 전략. `auto`, `required`, 또는\n        `{\"type\":\"function\",\"function\":{\"name\":...}}`. `none` 은 Converse\n        에 대응이 없어 거부한다.\n    parallel_tool_calls: OpenAI 호환 필드. Converse 에 대응 스위치가 없어\n        `false` 는 거부한다.\n    response_format: 구조화 출력 지정.",
         "properties": {
           "max_completion_tokens": {
             "anyOf": [
@@ -51,6 +51,27 @@
             "title": "N",
             "type": "integer"
           },
+          "parallel_tool_calls": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parallel Tool Calls"
+          },
+          "response_format": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ResponseFormat"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "stop": {
             "anyOf": [
               {
@@ -86,6 +107,35 @@
             ],
             "title": "Temperature"
           },
+          "tool_choice": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tool Choice"
+          },
+          "tools": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/ToolDef"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tools"
+          },
           "top_p": {
             "anyOf": [
               {
@@ -120,7 +170,7 @@
       },
       "ChatMessage": {
         "additionalProperties": true,
-        "description": "대화 메시지 한 건.\n\nAttributes:\n    role: `system`, `developer`, `user`, `assistant` 중 하나.\n    content: 문자열 또는 텍스트 조각 배열.\n    name: OpenAI 호환용 선택 필드. 변환에는 쓰지 않는다.",
+        "description": "대화 메시지 한 건.\n\nAttributes:\n    role: `system`, `developer`, `user`, `assistant`, `tool` 중 하나.\n    content: 문자열 또는 조각 배열.\n    name: OpenAI 호환용 선택 필드. 변환에는 쓰지 않는다.\n    tool_calls: 어시스턴트가 요청한 도구 호출 목록.\n    tool_call_id: `role=\"tool\"` 메시지가 응답하는 도구 호출 ID.",
         "properties": {
           "content": {
             "anyOf": [
@@ -153,6 +203,31 @@
           "role": {
             "title": "Role",
             "type": "string"
+          },
+          "tool_call_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tool Call Id"
+          },
+          "tool_calls": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/ToolCall"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tool Calls"
           }
         },
         "required": [
@@ -163,8 +238,18 @@
       },
       "ContentPart": {
         "additionalProperties": true,
-        "description": "메시지 본문 조각.\n\nAttributes:\n    type: 조각 종류. `text` 만 지원한다.\n    text: 텍스트 내용.",
+        "description": "메시지 본문 조각.\n\nAttributes:\n    type: 조각 종류. `text` 와 `image_url` 을 지원한다.\n    text: 텍스트 내용.\n    image_url: 이미지 조각의 URL 정보.",
         "properties": {
+          "image_url": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ImageUrl"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "text": {
             "default": "",
             "title": "Text",
@@ -382,6 +467,70 @@
         "title": "CreateUserRequest",
         "type": "object"
       },
+      "EmbeddingRequest": {
+        "additionalProperties": true,
+        "description": "`POST /v1/embeddings` 요청 본문.\n\nAttributes:\n    model: Bedrock 임베딩 모델 ID.\n    input: 임베딩할 텍스트. 문자열 또는 문자열 배열.\n    encoding_format: `float` 또는 `base64`. OpenAI 파이썬 클라이언트는\n        기본으로 `base64` 를 요청하므로 둘 다 구현한다.\n    dimensions: 출력 차원 수. 모델이 지원할 때만 의미가 있다.\n    user: 호출자 식별 문자열. 사용량은 API 키로 귀속되므로 무시한다.",
+        "properties": {
+          "dimensions": {
+            "anyOf": [
+              {
+                "maximum": 8192.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Dimensions"
+          },
+          "encoding_format": {
+            "default": "float",
+            "enum": [
+              "float",
+              "base64"
+            ],
+            "title": "Encoding Format",
+            "type": "string"
+          },
+          "input": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              }
+            ],
+            "title": "Input"
+          },
+          "model": {
+            "minLength": 1,
+            "title": "Model",
+            "type": "string"
+          },
+          "user": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "User"
+          }
+        },
+        "required": [
+          "model",
+          "input"
+        ],
+        "title": "EmbeddingRequest",
+        "type": "object"
+      },
       "HTTPValidationError": {
         "properties": {
           "detail": {
@@ -393,6 +542,47 @@
           }
         },
         "title": "HTTPValidationError",
+        "type": "object"
+      },
+      "ImageUrl": {
+        "additionalProperties": true,
+        "description": "이미지 조각의 URL 정보.\n\nAttributes:\n    url: `data:image/<형식>;base64,<페이로드>` 형태의 데이터 URL.\n        원격 `http(s)://` URL 은 게이트웨이가 거부한다.\n    detail: OpenAI 호환용 필드. Converse 에 대응이 없어 무시한다.",
+        "properties": {
+          "detail": {
+            "default": "auto",
+            "title": "Detail",
+            "type": "string"
+          },
+          "url": {
+            "default": "",
+            "title": "Url",
+            "type": "string"
+          }
+        },
+        "title": "ImageUrl",
+        "type": "object"
+      },
+      "JsonSchemaSpec": {
+        "additionalProperties": true,
+        "description": "`response_format` 의 JSON Schema 명세.\n\nAttributes:\n    name: 스키마 이름. Converse 도구 이름으로 쓰인다.\n    json_schema: 실제 JSON Schema. OpenAI 는 `schema` 라는 이름을 쓰지만\n        pydantic `BaseModel.schema` 와 충돌해 별칭으로 받는다.\n    strict: OpenAI 호환용. 받아들이지만 **게이트웨이가 스키마 준수를\n        검증하지는 않는다.** 스키마를 도구 입력으로 넘겨 모델이\n        지키게 하는 것이고, 결과를 다시 대조하지는 않는다.",
+        "properties": {
+          "name": {
+            "default": "structured_output",
+            "title": "Name",
+            "type": "string"
+          },
+          "schema": {
+            "additionalProperties": true,
+            "title": "Schema",
+            "type": "object"
+          },
+          "strict": {
+            "default": true,
+            "title": "Strict",
+            "type": "boolean"
+          }
+        },
+        "title": "JsonSchemaSpec",
         "type": "object"
       },
       "PutAuthConfigRequest": {
@@ -524,6 +714,29 @@
         "title": "PutGuardrailExemptionRequest",
         "type": "object"
       },
+      "ResponseFormat": {
+        "additionalProperties": true,
+        "description": "구조화 출력 지정.\n\nAttributes:\n    type: `text`, `json_object`, `json_schema` 중 하나.\n    json_schema: `json_schema` 일 때의 스키마 명세.",
+        "properties": {
+          "json_schema": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/JsonSchemaSpec"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "type": {
+            "default": "text",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "title": "ResponseFormat",
+        "type": "object"
+      },
       "SelfIssueKeyRequest": {
         "additionalProperties": false,
         "description": "셀프서비스 키 발급 요청.\n\n계정·사용자는 토큰에서 결정하므로 본문으로 받지 않는다. 받으면 다른\n사용자에게 키를 발급하는 경로가 열린다.\n\nAttributes:\n    name: 키 표시 이름. 어디에 쓰는 키인지 구분하는 용도다.\n    allowed_models: 이 키로 호출할 수 있는 모델. 생략하면 계정 설정의\n        기본값을 따른다. 계정이 정한 범위를 넘길 수는 없다.",
@@ -546,6 +759,91 @@
           "name"
         ],
         "title": "SelfIssueKeyRequest",
+        "type": "object"
+      },
+      "ToolCall": {
+        "additionalProperties": true,
+        "description": "어시스턴트가 요청한 도구 호출 하나.\n\nAttributes:\n    id: 도구 호출 식별자. 도구 결과 메시지가 이 값을 참조한다.\n    type: `function` 만 지원한다.\n    function: 함수 이름과 인자.",
+        "properties": {
+          "function": {
+            "$ref": "#/components/schemas/ToolCallFunction"
+          },
+          "id": {
+            "default": "",
+            "title": "Id",
+            "type": "string"
+          },
+          "type": {
+            "default": "function",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "title": "ToolCall",
+        "type": "object"
+      },
+      "ToolCallFunction": {
+        "additionalProperties": true,
+        "description": "도구 호출의 함수 부분.\n\nAttributes:\n    name: 호출할 함수 이름.\n    arguments: 인자. OpenAI 규약대로 **JSON 문자열**이다.",
+        "properties": {
+          "arguments": {
+            "default": "",
+            "title": "Arguments",
+            "type": "string"
+          },
+          "name": {
+            "default": "",
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "title": "ToolCallFunction",
+        "type": "object"
+      },
+      "ToolDef": {
+        "additionalProperties": true,
+        "description": "요청이 노출하는 도구 하나.\n\nAttributes:\n    type: `function` 만 지원한다.\n    function: 함수 정의.",
+        "properties": {
+          "function": {
+            "$ref": "#/components/schemas/ToolFunctionDef"
+          },
+          "type": {
+            "default": "function",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "function"
+        ],
+        "title": "ToolDef",
+        "type": "object"
+      },
+      "ToolFunctionDef": {
+        "additionalProperties": true,
+        "description": "도구로 노출할 함수 정의.\n\nAttributes:\n    name: 함수 이름.\n    description: 함수 설명. 모델이 호출 여부를 판단하는 근거다.\n    parameters: JSON Schema 로 표현한 인자 스펙.",
+        "properties": {
+          "description": {
+            "default": "",
+            "title": "Description",
+            "type": "string"
+          },
+          "name": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "parameters": {
+            "additionalProperties": true,
+            "title": "Parameters",
+            "type": "object"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "title": "ToolFunctionDef",
         "type": "object"
       },
       "UpdateAccountRequest": {
@@ -785,7 +1083,7 @@
   "info": {
     "description": "Amazon Bedrock 앞단의 OpenAI 호환 게이트웨이.\n\n- `POST /v1/chat/completions` — OpenAI Chat Completions 호환 (스트리밍 지원)\n- `GET /v1/models` — 호출 가능한 모델 목록\n- `/admin/*` — 계정·팀·사용자·API 키 관리 (`X-Admin-Token` 필요)\n- `/analytics/*` — 계정·팀·사용자·모델별 사용량 집계 (`X-Admin-Token` 필요)\n- `/ui` — 모니터링 대시보드",
     "title": "LLM Gateway",
-    "version": "2.1.1"
+    "version": "2.2.0"
   },
   "openapi": "3.1.0",
   "paths": {
@@ -4671,6 +4969,84 @@
           }
         },
         "summary": "Chat Completions",
+        "tags": [
+          "openai-compat"
+        ]
+      }
+    },
+    "/v1/embeddings": {
+      "post": {
+        "description": "텍스트 임베딩을 생성한다.\n\n채팅과 같은 검사를 모두 통과한다. 인증 → 레이트리밋 → 단가 정책 →\n모델 허용 목록 → 예산 순이다. 임베딩만 예외로 두면 예산을 우회하는\n경로가 된다.\n\n가드레일은 붙이지 않는다. 임베딩은 생성 응답이 없어 검사 대상이 없고,\nConverse 경로가 아니라 `guardrailConfig` 를 실을 자리도 없다.\n\nArgs:\n    payload: OpenAI 형식 요청 본문.\n    services: 서비스 컨테이너.\n    authorization: `Bearer <api-key>` 헤더.\n    x_request_id: 클라이언트가 지정한 상관관계 ID.\n\nReturns:\n    OpenAI 형식의 임베딩 응답.\n\nRaises:\n    GatewayError: 인증·권한·예산·업스트림 오류가 발생한 경우.",
+        "operationId": "embeddings_v1_embeddings_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Request-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Request-Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EmbeddingRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Embeddings V1 Embeddings Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Embeddings",
         "tags": [
           "openai-compat"
         ]
