@@ -331,6 +331,20 @@ def test_배치는입력순서대로벡터를모은다() -> None:
 # ---------------------------------------------------------------------------
 
 
+def test_float32범위를넘는벡터값은GatewayError로거부한다() -> None:
+    # math.isfinite 는 유한한지만 보지, float32 범위(~3.4e38) 를 넘는지는
+    # 보지 않는다. struct.pack 의 OverflowError 를 그대로 두면 500 이 나가며
+    # 실패 레코드로 집계되지 않는다. 평범한 Exception 이 아니라 GatewayError
+    # 로 바뀌어야 라우터의 실패 처리 경로가 잡을 수 있다.
+    with pytest.raises(errors.GatewayError):
+        translate.build_embedding_response(
+            model_id=_TITAN,
+            vectors=[[1e39]],
+            input_tokens=3,
+            base64_encoding=True,
+        )
+
+
 def test_임베딩응답에completion_tokens가없다() -> None:
     actual = translate.build_embedding_response(
         model_id=_TITAN, vectors=[[0.5]], input_tokens=3

@@ -85,6 +85,66 @@ def botocore_client_error() -> Exception:
     )
 
 
+class _FakeBody:
+    """지정한 순번부터 `.read()` 가 BotoCoreError 를 던지는 응답 본문 대역."""
+
+    def __init__(self, raise_at_call: list[int], token_count: int) -> None:
+        self._raise_at_call = raise_at_call
+        self._token_count = token_count
+
+    def read(self) -> bytes:
+        """읽을 때 예외를 던지거나 정상 본문을 돌려준다."""
+        if self._raise_at_call:
+            import botocore.exceptions
+
+            raise botocore.exceptions.ReadTimeoutError(
+                endpoint_url="https://bedrock-runtime.example.com"
+            )
+        return json.dumps(
+            {
+                "embedding": [0.1, 0.2],
+                "inputTextTokenCount": self._token_count,
+            }
+        ).encode()
+
+
+class _FailReadAfterN:
+    """N 번째 호출부터 응답 본문을 읽을 때 BotoCoreError 가 나는 대역.
+
+    `invoke_model` 자체는 성공한다 — 네트워크 스트림을 다 받은 뒤 몸체를
+    읽다가 타임아웃이 나는 상황(`ReadTimeoutError`)을 재현한다.
+    """
+
+    def __init__(self, fail_at: int, token_count: int = 5) -> None:
+        self.fail_at = fail_at
+        self.token_count = token_count
+        self.calls = 0
+
+    def invoke_model(self, **params: typing.Any) -> dict[str, typing.Any]:
+        """항상 성공하지만 N 번째 응답의 본문은 읽을 때 예외가 난다."""
+        del params
+        self.calls += 1
+        raise_at_call = [1] if self.calls >= self.fail_at else []
+        return {"body": _FakeBody(raise_at_call, self.token_count)}
+
+
+def test_응답본문을읽다가BotoCoreError가나도이미소비된토큰이보존된다() -> None:
+    """`invoke_model` 호출 자체가 아니라 응답 본문을 읽다가 나는
+    `BotoCoreError`(예: `ReadTimeoutError`)도 변환해야 한다.
+
+    이 예외가 `GatewayError` 로 바뀌지 않으면 라우터의
+    `except errors.GatewayError` 에 잡히지 않아 앞서 성공한 호출들의 토큰이
+    사용량에 기록되지 못한 채 사라진다.
+    """
+    runtime = _FailReadAfterN(fail_at=3, token_count=5)
+
+    with pytest.raises(errors.GatewayError) as caught:
+        _gateway(runtime).embed(model_id=_TITAN, texts=["a", "b", "c", "d"])
+
+    # 1·2번째는 성공했다 → 5 + 5 = 10
+    assert caught.value.consumed_input_tokens == 10
+
+
 def test_배치중간실패시이미소비된토큰이예외에실린다() -> None:
     """3번째에서 실패하면 앞선 2번의 토큰이 보존돼야 한다.
 
@@ -206,6 +266,45 @@ def test_구조화출력에서잘린응답은length로보고한다(
 
     assert response.status_code == 200
     assert response.json()["choices"][0]["finish_reason"] == "length"
+
+
+def test_구조화출력에서가드레일개입은content_filter로보고한다(
+    client: testclient.TestClient, api_key: str, fake_bedrock: typing.Any
+) -> None:
+    """가드레일이 막은 요청을 "모델이 toolChoice 를 지원하지 않는다" 는
+    502 로 다루면 안 된다.
+
+    가드레일이 개입하면 Converse 는 도구 호출 없이 차단 문구와
+    `guardrail_intervened` 만 돌려준다. 이를 `unwrap_structured_output` 의
+    "모델이 합성 도구를 호출하지 않았다" 경로로 처리하면 가드레일에 걸린
+    요청마다 502 가 나가 OpenAI SDK 가 재시도하며 반복 청구되고, 대시보드에는
+    가드레일 개입이 아니라 upstream 오류로 남는다.
+    """
+    fake_bedrock.tool_calls = ()
+    fake_bedrock.stop_reason = "guardrail_intervened"
+
+    response = client.post(
+        "/v1/chat/completions",
+        headers={"Authorization": f"Bearer {api_key}"},
+        json={
+            "model": "amazon.nova-lite-v1:0",
+            "messages": [{"role": "user", "content": "안녕"}],
+            "response_format": {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "answer",
+                    "schema": {"type": "object", "properties": {}},
+                },
+            },
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["choices"][0]["finish_reason"] == "content_filter"
+    assert (
+        body["choices"][0]["message"]["content"] == conftest.FAKE_RESPONSE_TEXT
+    )
 
 
 def test_구조화출력실패는사용량에실패로기록된다(

@@ -463,6 +463,18 @@ def _build_tool_config(
             " 충돌한다. 둘 중 하나만 보낸다."
         )
 
+    if wants_structured and request.tool_choice is not None:
+        # 구조화 출력은 합성 도구를 강제 호출(toolChoice)해 구현한다.
+        # tool_choice 를 함께 받아 조용히 무시하면, 예를 들어
+        # tool_choice="none" 을 보낸 사람은 도구가 전혀 호출되지 않을
+        # 것으로 기대하는데 실제로는 강제 호출된다. 다른 지원하지 않는
+        # 조합처럼 조용히 다르게 동작시키지 않고 거부한다.
+        raise errors.InvalidRequestError(
+            "response_format=json_schema 와 tool_choice 를 함께 쓸 수 없다."
+            " 구조화 출력은 합성 도구를 항상 강제 호출하므로 tool_choice 가"
+            " 요청한 선택 전략과 충돌한다."
+        )
+
     if wants_structured and request.stream:
         raise errors.InvalidRequestError(
             "response_format=json_schema 는 스트리밍과 함께 쓸 수 없다."
@@ -589,7 +601,8 @@ def _sanitize_tool_name(name: str) -> str:
         영숫자와 밑줄만 남긴 이름. 비면 기본값을 쓴다.
     """
     cleaned = "".join(
-        char if char.isalnum() or char == "_" else "_" for char in name
+        char if (char.isascii() and char.isalnum()) or char == "_" else "_"
+        for char in name
     ).strip("_")
     return cleaned[:64] or "structured_output"
 
@@ -856,7 +869,17 @@ def build_embedding_response(
     data: list[_JsonDict] = []
     for index, vector in enumerate(vectors):
         if base64_encoding:
-            packed = struct.pack(f"<{len(vector)}f", *vector)
+            # `math.isfinite` 검사는 값이 유한한지만 본다. float32 범위
+            # (~3.4e38)를 넘는 유한값은 통과한 뒤 여기서 OverflowError 가
+            # 난다. Titan 은 정규화된 벡터를 주므로 현실에서는 생기지
+            # 않지만, 조용히 500 으로 새면 이 레코드도 실패로 집계되지
+            # 않는다.
+            try:
+                packed = struct.pack(f"<{len(vector)}f", *vector)
+            except (struct.error, OverflowError) as exc:
+                raise errors.UpstreamError(
+                    "임베딩 벡터 값이 float32 범위를 넘어 직렬화할 수 없다."
+                ) from exc
             embedding: typing.Any = base64.b64encode(packed).decode("ascii")
         else:
             embedding = list(vector)

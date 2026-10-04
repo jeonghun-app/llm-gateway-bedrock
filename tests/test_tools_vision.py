@@ -465,6 +465,38 @@ def test_json_schema와스트리밍을함께쓰면거부한다() -> None:
         )
 
 
+def test_json_schema와tool_choice를함께쓰면거부한다() -> None:
+    # 구조화 출력은 합성 도구를 항상 강제 호출한다. tool_choice="none" 처럼
+    # 다른 선택 전략을 함께 받아 조용히 무시하면, 도구가 호출되지 않을
+    # 것으로 기대한 요청자와 다르게 동작한다.
+    with pytest.raises(errors.InvalidRequestError, match="함께 쓸 수 없다"):
+        translate.to_bedrock_request(
+            _request(
+                tool_choice="none",
+                response_format={
+                    "type": "json_schema",
+                    "json_schema": {"name": "a", "schema": _SCHEMA},
+                },
+            )
+        )
+
+
+def test_스키마이름의비ASCII문자는밑줄로바뀐다() -> None:
+    # Bedrock 의 toolSpec 이름 규칙은 [a-zA-Z0-9_-] 다. str.isalnum() 은
+    # 한글 등 비 ASCII 문자도 "영숫자" 로 인정해 그대로 통과시켰는데, 그런
+    # 이름을 Bedrock 에 보내면 ValidationException 이 난다.
+    request = _request(
+        response_format={
+            "type": "json_schema",
+            "json_schema": {"name": "결과", "schema": _SCHEMA},
+        }
+    )
+
+    actual = translate.to_bedrock_request(request)
+
+    assert actual.structured_tool_name == "structured_output"
+
+
 def test_구조화출력을본문으로되돌린다() -> None:
     calls = [translate.ToolUse("tu_1", "answer", '{"city": "서울"}')]
 

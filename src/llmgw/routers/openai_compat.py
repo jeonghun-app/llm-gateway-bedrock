@@ -483,17 +483,26 @@ def _blocking_completion(
     # 과소 보고되고, 그것도 운영자가 가장 찾아야 하는 경우(모델이 강제 도구
     # 호출을 지원하지 않음)에 과소 보고된다.
     try:
-        if bedrock_request.structured_tool_name is not None:
+        if (
+            bedrock_request.structured_tool_name is not None
+            and finish_reason != "content_filter"
+        ):
             # 구조화 출력은 강제 도구 호출로 구현했다. 합성 도구를 클라이언트에
             # 노출하지 않고, 그 입력을 본문 JSON 으로 되돌린다.
+            #
+            # 가드레일이 개입하면 Converse 는 도구 호출 없이 차단 문구
+            # 텍스트와 `guardrail_intervened`/`content_filtered` 만 돌려준다.
+            # 그 경우를 "모델이 toolChoice 를 지원하지 않는다" 는 오류로
+            # 다루면, 가드레일에 걸린 요청이 502 로 재시도되며 반복 청구되고
+            # 대시보드에는 가드레일 개입이 아니라 upstream 오류로 남는다.
+            # 차단 문구를 그대로 본문으로 돌려준다.
             content = translate.unwrap_structured_output(
                 tool_calls, bedrock_request.structured_tool_name
             )
             tool_calls = ()
             # **도구 호출로 끝난 경우만** stop 으로 바꾼다. 무조건 덮으면
-            # max_tokens 로 잘린 응답(length)이나 가드레일 개입
-            # (content_filter)이 "정상 종료" 로 보고된다. 클라이언트는 잘린
-            # JSON 을 완전한 결과로 읽는다.
+            # max_tokens 로 잘린 응답(length)이 "정상 종료" 로 보고된다.
+            # 클라이언트는 잘린 JSON 을 완전한 결과로 읽는다.
             if finish_reason == "tool_calls":
                 finish_reason = "stop"
     except errors.GatewayError as exc:

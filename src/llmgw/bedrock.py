@@ -320,14 +320,18 @@ class BedrockGateway:
                         contentType="application/json",
                         accept="application/json",
                     )
+                    # 응답 본문을 다 읽기 전까지는 호출이 끝난 것이 아니다.
+                    # 스트리밍 바디를 읽다가 나는 BotoCoreError(예:
+                    # ReadTimeoutError)도 여기서 잡아야, 바깥의
+                    # consumed_input_tokens 기록이 이 호출들의 토큰을
+                    # 놓치지 않는다.
+                    payload = self._read_embedding_body(response)
                 except botocore.exceptions.ClientError as exc:
                     raise self._translate_error(exc, model_id) from exc
                 except botocore.exceptions.BotoCoreError as exc:
                     raise errors.UpstreamError(
                         f"Bedrock 임베딩 호출에 실패했다: {type(exc).__name__}"
                     ) from exc
-
-                payload = self._read_embedding_body(response)
                 vector, tokens = self._parse_embedding(
                     family, payload, model_id
                 )
