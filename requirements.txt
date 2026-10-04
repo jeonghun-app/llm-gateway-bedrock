@@ -18,4 +18,4 @@ botocore==1.43.78
 aws-lambda-powertools==3.34.0
 # OIDC(Cognito 등) 액세스 토큰 검증. RS256 서명 확인에 cryptography 가 필요해
 # extras 로 함께 고정한다.
-pyjwt[crypto]==2.12.1
+pyjwt[crypto]==2.13.0
