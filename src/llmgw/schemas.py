@@ -266,8 +266,14 @@ class EmbeddingRequest(pydantic.BaseModel):
         items = (
             [self.input] if isinstance(self.input, str) else list(self.input)
         )
-        if not items or all(not item for item in items):
+        if not items:
             raise ValueError("input 이 비어 있다.")
+        # 빈 문자열이 하나라도 섞여 있으면 Bedrock 을 호출하기 전에 거부한다.
+        # 통과시키면 앞선 입력은 이미 청구된 뒤에야 Bedrock 이 거부해, 쓸모
+        # 없는 비용과 늦은 실패로 이어진다.
+        for index, item in enumerate(items):
+            if not item.strip():
+                raise ValueError(f"input[{index}] 이 비어 있다.")
         return items
 
 

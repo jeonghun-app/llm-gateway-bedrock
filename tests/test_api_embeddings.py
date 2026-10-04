@@ -131,6 +131,19 @@ def test_빈입력은거부한다(client: testclient.TestClient, api_key: str) -
     assert response.status_code == 400
 
 
+def test_배열에빈문자열이섞이면호출전에거부한다(
+    client: testclient.TestClient,
+    api_key: str,
+    fake_bedrock: typing.Any,
+) -> None:
+    # 모든 항목이 아니라 하나라도 비면 거부해야 한다. 통과시키면 앞선
+    # 입력은 이미 Bedrock 에 청구된 뒤에야 실패해 비용이 낭비된다.
+    response = _embed(client, api_key, input=["안녕하세요", ""])
+
+    assert response.status_code == 400
+    assert fake_bedrock.last_embed_call is None
+
+
 def test_토큰ID배열은거부한다(
     client: testclient.TestClient, api_key: str
 ) -> None:
