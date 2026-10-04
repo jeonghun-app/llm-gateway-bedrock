@@ -307,6 +307,42 @@ def test_구조화출력에서가드레일개입은content_filter로보고한다
     )
 
 
+def test_가드레일개입과합성도구호출이함께와도도구호출을노출하지않는다(
+    client: testclient.TestClient, api_key: str, fake_bedrock: typing.Any
+) -> None:
+    """가드레일 개입 전에 모델이 합성 도구를 이미 불렀을 수 있다.
+
+    클라이언트는 `tools` 를 보낸 적이 없으므로, 노출하지 않기로 한 합성
+    도구 호출이 `content_filter` 분기에서 그대로 `tool_calls` 로 새면
+    안 된다 (교차 리뷰 재검토에서 나온 결함).
+    """
+    fake_bedrock.tool_calls = (
+        translate.ToolUse("tu_1", "answer", '{"city": "서울"}'),
+    )
+    fake_bedrock.stop_reason = "content_filtered"
+
+    response = client.post(
+        "/v1/chat/completions",
+        headers={"Authorization": f"Bearer {api_key}"},
+        json={
+            "model": "amazon.nova-lite-v1:0",
+            "messages": [{"role": "user", "content": "안녕"}],
+            "response_format": {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "answer",
+                    "schema": {"type": "object", "properties": {}},
+                },
+            },
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["choices"][0]["finish_reason"] == "content_filter"
+    assert not body["choices"][0]["message"].get("tool_calls")
+
+
 def test_구조화출력실패는사용량에실패로기록된다(
     client: testclient.TestClient,
     api_key: str,

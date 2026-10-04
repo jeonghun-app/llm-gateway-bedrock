@@ -512,11 +512,12 @@ keep.
 | `parallel_tool_calls: false` | Rejected. Converse has no switch to disable parallel calls |
 | `response_format: json_object` | Rejected. Without a schema there is nothing to enforce. Use `json_schema` |
 | `response_format: json_schema` + `stream` | Rejected. Structured output is implemented as a forced tool call, so there are no incremental text deltas |
+| `response_format: json_schema` + `tool_choice` | Rejected. Structured output always force-calls a synthetic tool, which conflicts with the requested choice strategy |
 | Remote URL images | Rejected. Fetching them server-side would open an SSRF path. Send base64 |
 | `image_url.detail` | Ignored. Converse has no equivalent |
 | Images in system/developer messages | Rejected. Converse `system` accepts text only |
 | Images in `role="tool"` messages | Rejected. Tool results are relayed as text only |
-| More than 8 images or 18 MB total per request | Rejected. Protects task memory |
+| More than 8 images or 18 MB total per request | Rejected. Limits how much decoded image data accumulates in memory. There is no size cap on the request **body** itself yet ([#41](https://github.com/jeonghun-app/llm-gateway-bedrock/issues/41)) |
 
 ### Tool use (function calling)
 

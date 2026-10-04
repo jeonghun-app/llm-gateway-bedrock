@@ -509,11 +509,12 @@ OpenAI 스펙 중 Bedrock Converse 에 대응이 없는 필드(`presence_penalty
 | `parallel_tool_calls: false` | 거부. Converse 에 병렬 호출을 끄는 스위치가 없다 |
 | `response_format: json_object` | 거부. 스키마가 없으면 강제할 수단이 없다. `json_schema` 를 쓴다 |
 | `response_format: json_schema` + `stream` | 거부. 구조화 출력은 강제 도구 호출로 구현해 증분 텍스트가 없다 |
+| `response_format: json_schema` + `tool_choice` | 거부. 구조화 출력은 합성 도구를 항상 강제 호출해 `tool_choice` 가 요청한 선택 전략과 충돌한다 |
 | 원격 URL 이미지 | 거부. 게이트웨이가 대신 가져오면 SSRF 통로가 된다. base64 로 보낸다 |
 | `image_url.detail` | 무시. Converse 에 대응이 없다 |
 | system/developer 메시지의 이미지 | 거부. Converse 의 `system` 은 텍스트만 받는다 |
 | `role="tool"` 메시지의 이미지 | 거부. 도구 결과는 텍스트로만 전달한다 |
-| 요청당 이미지 8장 또는 총 18MB 초과 | 거부. 태스크 메모리 보호 |
+| 요청당 이미지 8장 또는 총 18MB 초과 | 거부. 디코딩된 이미지가 메모리에 쌓이는 양을 제한한다. 요청 **본문** 자체의 크기 상한은 아직 없다([#41](https://github.com/jeonghun-app/llm-gateway-bedrock/issues/41)) |
 
 ### 도구 사용 (function calling)
 

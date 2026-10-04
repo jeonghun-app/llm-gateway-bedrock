@@ -505,6 +505,13 @@ def _blocking_completion(
             # 클라이언트는 잘린 JSON 을 완전한 결과로 읽는다.
             if finish_reason == "tool_calls":
                 finish_reason = "stop"
+        elif bedrock_request.structured_tool_name is not None:
+            # finish_reason == content_filter 로 위 분기를 건너뛴 경우다.
+            # 모델이 가드레일 개입 전에 합성 도구를 이미 불렀다면 Converse 가
+            # 차단 문구와 함께 그 toolUse 블록을 돌려줄 수 있다. 클라이언트는
+            # tools 를 보낸 적이 없으므로, 노출하지 않기로 한 합성 도구
+            # 호출이 tool_calls 로 새면 안 된다.
+            tool_calls = ()
     except errors.GatewayError as exc:
         _record_failure(
             services=services,
